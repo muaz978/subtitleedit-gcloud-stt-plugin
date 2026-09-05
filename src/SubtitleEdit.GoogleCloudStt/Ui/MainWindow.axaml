@@ -1,0 +1,85 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SubtitleEdit.GoogleCloudStt.Ui.MainWindow"
+        Title="Google Cloud Speech-to-Text"
+        Width="620" Height="560"
+        MinWidth="560" MinHeight="520"
+        WindowStartupLocation="CenterScreen">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- Header -->
+    <Border Name="HeaderBorder" Grid.Row="0" Padding="20,16">
+      <StackPanel Spacing="3">
+        <TextBlock Name="TitleText" Text="Google Cloud Speech-to-Text" FontSize="17" FontWeight="SemiBold" />
+        <TextBlock Name="SubtitleText" FontSize="12" TextWrapping="Wrap"
+                   Text="Transcribes with real word level timing, so pauses and silence stay where they belong." />
+      </StackPanel>
+    </Border>
+
+    <!-- Body -->
+    <ScrollViewer Grid.Row="1" Padding="20,16">
+      <StackPanel Spacing="16">
+
+        <Border Name="VideoCard" Padding="14" CornerRadius="6">
+          <StackPanel Spacing="4">
+            <TextBlock Name="VideoLabel" FontSize="11" Text="VIDEO" />
+            <TextBlock Name="VideoName" FontSize="13" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+            <TextBlock Name="VideoMeta" FontSize="11" />
+          </StackPanel>
+        </Border>
+
+        <StackPanel Spacing="6">
+          <TextBlock Text="Service account key" FontSize="12" FontWeight="SemiBold" />
+          <Grid ColumnDefinitions="*,Auto" >
+            <TextBox Name="CredentialsBox" Grid.Column="0" PlaceholderText="Choose the JSON key file from Google Cloud" />
+            <Button Name="BrowseButton" Grid.Column="1" Margin="8,0,0,0" Content="Browse" Padding="16,6" />
+          </Grid>
+          <TextBlock Name="CredentialsHint" FontSize="11" TextWrapping="Wrap"
+                     Text="Speech-to-Text v2 does not accept API keys. In the Google Cloud console: IAM and Admin, Service Accounts, Keys, Add key, JSON." />
+        </StackPanel>
+
+        <Grid ColumnDefinitions="*,16,*">
+          <StackPanel Grid.Column="0" Spacing="6">
+            <TextBlock Text="Project" FontSize="12" FontWeight="SemiBold" />
+            <TextBox Name="ProjectBox" PlaceholderText="Read from the key file" />
+          </StackPanel>
+          <StackPanel Grid.Column="2" Spacing="6">
+            <TextBlock Text="Spoken language" FontSize="12" FontWeight="SemiBold" />
+            <ComboBox Name="LanguageBox" HorizontalAlignment="Stretch" />
+          </StackPanel>
+        </Grid>
+
+        <CheckBox Name="DynamicBatchingBox"
+                  Content="Use dynamic batching (much cheaper, results take longer to come back)" />
+
+        <Border Name="CostCard" Padding="12" CornerRadius="6">
+          <StackPanel Spacing="2">
+            <TextBlock Name="CostText" FontSize="13" FontWeight="SemiBold" />
+            <TextBlock Name="CostHint" FontSize="11" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <StackPanel Name="ProgressPanel" Spacing="6" IsVisible="False">
+          <ProgressBar Name="ProgressBar" Height="4" Minimum="0" Maximum="1" />
+          <TextBlock Name="ProgressText" FontSize="12" />
+        </StackPanel>
+
+        <Border Name="MessageCard" Padding="12" CornerRadius="6" IsVisible="False">
+          <TextBlock Name="MessageText" FontSize="12" TextWrapping="Wrap" />
+        </Border>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Footer -->
+    <Border Name="FooterBorder" Grid.Row="2" Padding="20,14">
+      <Grid ColumnDefinitions="*,Auto,Auto">
+        <TextBlock Name="StatusText" Grid.Column="0" VerticalAlignment="Center" FontSize="11" />
+        <Button Name="CloseButton" Grid.Column="1" Content="Close" Padding="18,8" />
+        <Button Name="TranscribeButton" Grid.Column="2" Margin="8,0,0,0" Content="Transcribe" Padding="22,8" />
+      </Grid>
+    </Border>
+
+  </Grid>
+</Window>
