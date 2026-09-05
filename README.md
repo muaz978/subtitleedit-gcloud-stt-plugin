@@ -1,5 +1,26 @@
 # Google Cloud Speech-to-Text for Subtitle Edit 5
 
+> ### This is now built into Subtitle Edit. You probably do not need this plugin.
+>
+> Subtitle Edit 5 ships **Google Cloud Speech-to-Text** as a built-in engine. Pick it under
+> **Video, Audio to text**, in the same list as Whisper and the other online engines. It uses
+> the same API, the same `chirp_3` model and the same word level timings this plugin used,
+> and it needs no 40 MB download.
+>
+> The work here was merged upstream instead:
+> [#14561](https://github.com/SubtitleEdit/subtitleedit/pull/14561) added the engine,
+> [#14567](https://github.com/SubtitleEdit/subtitleedit/pull/14567) brought over the audio
+> format, the cue building from word timings and the reliability guards below, and
+> [#14582](https://github.com/SubtitleEdit/subtitleedit/pull/14582) adds sign-in with
+> `gcloud` for organisations that do not allow service account keys.
+>
+> This repository stays up for the testing evidence in
+> [docs/testing-evidence.md](docs/testing-evidence.md), which documents the defects found in
+> Google's API across three full episodes and is the reasoning behind the guards now running
+> in Subtitle Edit itself. The v1.0.0 release still works, but the built-in engine is better
+> maintained and produces the same results.
+
+
 A Subtitle Edit 5 plugin that transcribes the open video with Google Cloud
 Speech-to-Text v2, using **real word level timings**.
 
