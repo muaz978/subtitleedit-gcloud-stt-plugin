@@ -1,0 +1,15 @@
+{
+  "apiVersion": 1,
+  "name": "Google Cloud Speech-to-Text",
+  "description": "Transcribes the open video with Google Cloud Speech-to-Text v2, using real word level timings so cues land on actual speech instead of being spread by character count.",
+  "version": "1.0.0",
+  "author": "muaz978",
+  "url": "https://github.com/muaz978/subtitleedit-gcloud-stt-plugin",
+  "menu": "Tools",
+  "minSeVersion": "5.0.0",
+  "executables": {
+    "windows": "SubtitleEditGoogleCloudStt.exe",
+    "linux": "SubtitleEditGoogleCloudStt",
+    "macos": "SubtitleEditGoogleCloudStt"
+  }
+}

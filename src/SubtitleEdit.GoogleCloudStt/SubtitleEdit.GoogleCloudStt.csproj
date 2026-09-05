@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SubtitleEditGoogleCloudStt</AssemblyName>
+    <RootNamespace>SubtitleEdit.GoogleCloudStt</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationManifest></ApplicationManifest>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Google.Cloud.Speech.V2" Version="1.8.0" />
+    <PackageReference Include="Google.Cloud.Storage.V1" Version="4.15.0" />
+  </ItemGroup>
+
+  <!--
+    Trimming note: TrimMode=full silently breaks GoogleCredential.FromJson at runtime
+    (it is a reflection path, so it fails as an exception rather than a build error).
+    The publish script uses TrimMode=partial, which is verified working. Never ship a
+    trimmed build without loading a real credential and issuing one real RPC first.
+  -->
+
+</Project>
