@@ -23,8 +23,41 @@ OUT_SRT = sys.argv[2] if len(sys.argv) > 2 else os.path.splitext(VIDEO)[0] + ".s
 # while two different episodes never share a work directory.
 _slug   = "".join(c if c.isalnum() else "-" for c in os.path.basename(VIDEO))[:60]
 WORK    = sys.argv[3] if len(sys.argv) > 3 else os.path.expanduser(f"~/.cache/se-stt/{_slug}")
-PROJECT, REGION, MODEL, LANG = "hp-subtitle", "us", "chirp_3", "tr-TR"
-BUCKET  = "hp-subtitle-stt-test-gonuldagi"
+# Deployment settings come from the environment, so no project, bucket or account name
+# belongs to this file. Set them in your shell, or as KEY=VALUE lines in
+# ~/.config/se-stt/config.env (which is read first and never overrides an existing variable).
+CONFIG_FILE = os.path.expanduser("~/.config/se-stt/config.env")
+if os.path.exists(CONFIG_FILE):
+    for _line in open(CONFIG_FILE, encoding="utf-8"):
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
+def _need(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(
+            f"{name} is not set.\n\n"
+            f"Put your deployment settings in {CONFIG_FILE}, or export them:\n"
+            f"  SE_STT_PROJECT=your-gcp-project-id\n"
+            f"  SE_STT_BUCKET=your-gcs-bucket\n"
+            f"  SE_STT_LANGUAGE=tr-TR\n"
+            f"  SE_STT_SERVICE_ACCOUNT=stt@your-project.iam.gserviceaccount.com   # optional\n"
+            f"  SE_STT_REGION=us                                                  # optional\n"
+            f"  SE_STT_MODEL=chirp_3                                              # optional")
+    return value
+
+PROJECT = _need("SE_STT_PROJECT")
+BUCKET  = _need("SE_STT_BUCKET")
+LANG    = _need("SE_STT_LANGUAGE")
+REGION  = os.environ.get("SE_STT_REGION", "us").strip() or "us"
+MODEL   = os.environ.get("SE_STT_MODEL", "chirp_3").strip() or "chirp_3"
+# Optional. When set, every gcloud call is pinned to it, so a run never depends on whichever
+# account happens to be active. Register the key once with:
+#   gcloud auth activate-service-account --key-file=/path/to/key.json
+SA      = os.environ.get("SE_STT_SERVICE_ACCOUNT", "").strip()
+ACCOUNT = [f"--account={SA}"] if SA else []
 PREFIX  = f"stt/{int(time.time())}/"
 CHUNK, MAX_SNAP = 1080.0, 40.0
 HOST    = f"{REGION}-speech.googleapis.com"
@@ -42,7 +75,7 @@ def api(method, url, body=None):
     data = json.dumps(body).encode() if body is not None else None
     for attempt in range(5):
         req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Authorization", "Bearer " + sh("gcloud","auth","print-access-token").stdout.strip())
+        req.add_header("Authorization", "Bearer " + sh("gcloud","auth","print-access-token",*ACCOUNT).stdout.strip())
         if data: req.add_header("Content-Type", "application/json")
         try:
             with urllib.request.urlopen(req, timeout=120) as r: return json.loads(r.read())
@@ -160,7 +193,7 @@ def transcribe_span(start, end, tag, depth=0):
     """Recognize one span, re-cutting it once if the result looks anomalous."""
     dur = end - start
     cut(start, end, f"{WORK}/{tag}.flac")
-    sh("gcloud","storage","cp","-q",f"{WORK}/{tag}.flac",f"gs://{BUCKET}/{PREFIX}")
+    sh("gcloud","storage","cp","-q",*ACCOUNT,f"{WORK}/{tag}.flac",f"gs://{BUCKET}/{PREFIX}")
     ws = recognize(f"gs://{BUCKET}/{PREFIX}{tag}.flac", tag)
     ws, looped = collapse(ws)
     kept, fixed = repair(ws, dur)
@@ -239,5 +272,5 @@ json.dump({"video":os.path.basename(VIDEO),"minutes":round(total/60,2),"chunks":
            "subtitle_words":sub_words,"cues":len(cues),
            "speech_density_pct":round(speech/total*100,1)},
           open(f"{WORK}/report.json","w"), indent=2, ensure_ascii=False)
-sh("gcloud","storage","rm","-q","--recursive",f"gs://{BUCKET}/{PREFIX}")
+sh("gcloud","storage","rm","-q","--recursive",*ACCOUNT,f"gs://{BUCKET}/{PREFIX}")
 log("removed uploaded audio")

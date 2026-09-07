@@ -1,5 +1,32 @@
 # Transcribing an episode
 
+## Setup, once
+
+The script carries no project, bucket or account name. Put yours in
+`~/.config/se-stt/config.env`:
+
+```
+SE_STT_PROJECT=your-gcp-project-id
+SE_STT_BUCKET=your-gcs-bucket
+SE_STT_LANGUAGE=tr-TR
+SE_STT_SERVICE_ACCOUNT=stt@your-project.iam.gserviceaccount.com   # optional
+SE_STT_REGION=us                                                  # optional
+SE_STT_MODEL=chirp_3                                              # optional
+```
+
+Any of these can be exported in the shell instead; the file never overrides a variable that
+is already set. If you set `SE_STT_SERVICE_ACCOUNT`, register its key once and every gcloud
+call is pinned to it, so a run never depends on whichever account happens to be active:
+
+```bash
+gcloud auth activate-service-account --key-file=/path/to/key.json
+```
+
+The account needs Cloud Speech Client on the project and read/write on the bucket. Bucket
+level admin is not required: the script only ever reads, writes and deletes objects.
+
+## Running it
+
 ```bash
 python3 tools/transcribe-episode.py "Gönül Dağı 221. Bölüm.mp4"
 ```
@@ -45,7 +72,8 @@ their chunk, words with no timestamp at all, and scrambled sentences. So:
 `tr-TR`, word time offsets and automatic punctuation on, `DYNAMIC_BATCHING` for cost, audio
 as 16 kHz mono 16-bit FLAC in ~18 minute chunks.
 
-Editing the defaults at the top of the script is fine, with two cautions:
+Deployment values come from the environment (see Setup). The rest are constants at the top
+of the script and are fine to edit, with two cautions:
 - keep `-sample_fmt s16`, or ffmpeg writes 24-bit FLAC, 78% larger than the raw PCM
 - keep chunks under 20 minutes, which is Google's cap when word timestamps are enabled
 
