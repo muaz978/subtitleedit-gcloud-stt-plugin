@@ -58,14 +58,21 @@ MODEL   = os.environ.get("SE_STT_MODEL", "chirp_3").strip() or "chirp_3"
 #   gcloud auth activate-service-account --key-file=/path/to/key.json
 SA      = os.environ.get("SE_STT_SERVICE_ACCOUNT", "").strip()
 ACCOUNT = [f"--account={SA}"] if SA else []
-PREFIX  = f"stt/{int(time.time())}/"
+# The pid keeps two runs started in the same second from sharing an upload path and
+# silently overwriting each other's audio.
+PREFIX  = f"stt/{int(time.time())}-{os.getpid()}/"
 CHUNK, MAX_SNAP = 1080.0, 40.0
 HOST    = f"{REGION}-speech.googleapis.com"
 FFMPEG, FFPROBE = "/opt/homebrew/bin/ffmpeg", "/opt/homebrew/bin/ffprobe"
 MAX_WORD, MAX_REPEATS = 5.0, 2
 
 env = dict(os.environ, CLOUDSDK_STORAGE_PARALLEL_COMPOSITE_UPLOAD_ENABLED="False")
-sh = lambda *a: subprocess.run(a, check=True, capture_output=True, text=True, env=env)
+def sh(*a):
+    """Run a command, and on failure report what it actually said rather than only its exit code."""
+    proc = subprocess.run(a, capture_output=True, text=True, env=env)
+    if proc.returncode != 0:
+        raise SystemExit(f"command failed ({proc.returncode}): {' '.join(a)}\n{(proc.stderr or proc.stdout).strip()[:800]}")
+    return proc
 log = lambda m: print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 def sec(v):
     try: return float(str(v).rstrip("s"))
