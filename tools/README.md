@@ -37,6 +37,10 @@ level admin is not required: the script only ever reads, writes and deletes obje
 python3 tools/transcribe-episode.py "Gönül Dağı 221. Bölüm.mp4"
 ```
 
+On Windows the command is `python`, not `python3`. The installer ships `python.exe` only, and the
+`python3` that Windows puts on PATH is a Microsoft Store stub which opens the Store instead of
+running anything.
+
 The subtitle is written next to the video. That is all a normal run needs.
 
 ## Read one line when it finishes
