@@ -1,5 +1,11 @@
 # Transcribing an episode
 
+## Prerequisites
+
+Python 3, plus `ffmpeg`, `ffprobe` and the Google Cloud CLI on PATH. Works on macOS, Linux and
+Windows. If any of the three is not on PATH, point at it directly with `SE_STT_FFMPEG`,
+`SE_STT_FFPROBE` or `SE_STT_GCLOUD`.
+
 ## Setup, once
 
 The script carries no project, bucket or account name. Put yours in

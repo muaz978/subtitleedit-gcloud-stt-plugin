@@ -12,7 +12,7 @@ opening sentence. That is one weakness rather than four, so this version attacks
 and keeps the repairs that proved necessary: loop collapsing, timing repair rather than
 word deletion, truncation recovery, and a verification pass.
 """
-import glob, json, os, re, subprocess, sys, time, urllib.request, urllib.error
+import glob, json, os, re, shutil, subprocess, sys, time, urllib.request, urllib.error
 
 if len(sys.argv) < 2:
     raise SystemExit("usage: transcribe-episode.py <video> [output.srt] [work-dir]")
@@ -63,7 +63,27 @@ ACCOUNT = [f"--account={SA}"] if SA else []
 PREFIX  = f"stt/{int(time.time())}-{os.getpid()}/"
 CHUNK, MAX_SNAP = 1080.0, 40.0
 HOST    = f"{REGION}-speech.googleapis.com"
-FFMPEG, FFPROBE = "/opt/homebrew/bin/ffmpeg", "/opt/homebrew/bin/ffprobe"
+def _tool(env_var, name, *fallbacks):
+    """Locate a helper binary. An explicit override wins, then PATH, then the usual install
+    locations. shutil.which is what makes this work on Windows, where gcloud is gcloud.cmd and
+    Python's process launcher will not resolve that through PATHEXT on its own."""
+    override = os.environ.get(env_var, "").strip()
+    if override:
+        if os.path.exists(override) or shutil.which(override):
+            return override
+        raise SystemExit(f"{env_var} is set to {override!r}, which does not exist.")
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in fallbacks:
+        if os.path.exists(candidate):
+            return candidate
+    raise SystemExit(f"{name} not found. Install it and put it on PATH, "
+                     f"or set {env_var} to its full path.")
+
+FFMPEG  = _tool("SE_STT_FFMPEG",  "ffmpeg",  "/opt/homebrew/bin/ffmpeg",  "/usr/local/bin/ffmpeg",  "/usr/bin/ffmpeg")
+FFPROBE = _tool("SE_STT_FFPROBE", "ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe")
+GCLOUD  = _tool("SE_STT_GCLOUD",  "gcloud")
 MAX_WORD, MAX_REPEATS = 5.0, 2
 
 env = dict(os.environ, CLOUDSDK_STORAGE_PARALLEL_COMPOSITE_UPLOAD_ENABLED="False")
@@ -82,7 +102,7 @@ def api(method, url, body=None):
     data = json.dumps(body).encode() if body is not None else None
     for attempt in range(5):
         req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Authorization", "Bearer " + sh("gcloud","auth","print-access-token",*ACCOUNT).stdout.strip())
+        req.add_header("Authorization", "Bearer " + sh(GCLOUD,"auth","print-access-token",*ACCOUNT).stdout.strip())
         if data: req.add_header("Content-Type", "application/json")
         try:
             with urllib.request.urlopen(req, timeout=120) as r: return json.loads(r.read())
@@ -200,7 +220,7 @@ def transcribe_span(start, end, tag, depth=0):
     """Recognize one span, re-cutting it once if the result looks anomalous."""
     dur = end - start
     cut(start, end, f"{WORK}/{tag}.flac")
-    sh("gcloud","storage","cp","-q",*ACCOUNT,f"{WORK}/{tag}.flac",f"gs://{BUCKET}/{PREFIX}")
+    sh(GCLOUD,"storage","cp","-q",*ACCOUNT,f"{WORK}/{tag}.flac",f"gs://{BUCKET}/{PREFIX}")
     ws = recognize(f"gs://{BUCKET}/{PREFIX}{tag}.flac", tag)
     ws, looped = collapse(ws)
     kept, fixed = repair(ws, dur)
@@ -279,5 +299,5 @@ json.dump({"video":os.path.basename(VIDEO),"minutes":round(total/60,2),"chunks":
            "subtitle_words":sub_words,"cues":len(cues),
            "speech_density_pct":round(speech/total*100,1)},
           open(f"{WORK}/report.json","w"), indent=2, ensure_ascii=False)
-sh("gcloud","storage","rm","-q","--recursive",*ACCOUNT,f"gs://{BUCKET}/{PREFIX}")
+sh(GCLOUD,"storage","rm","-q","--recursive",*ACCOUNT,f"gs://{BUCKET}/{PREFIX}")
 log("removed uploaded audio")
