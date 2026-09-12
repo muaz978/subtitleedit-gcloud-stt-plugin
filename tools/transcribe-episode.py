@@ -154,7 +154,7 @@ def recognize(uri, tag):
     cached = f"{WORK}/raw/{tag}.json"
     if os.path.exists(cached):
         log(f"  {tag}: reusing saved response")
-        return words_from(json.load(open(cached)))
+        return words_from(json.load(open(cached, encoding="utf-8")))
     body = {"config":{"autoDecodingConfig":{},"languageCodes":[LANG],"model":MODEL,
             "features":{"enableWordTimeOffsets":True,"enableAutomaticPunctuation":True}},
             "files":[{"uri":uri}],"recognitionOutputConfig":{"inlineResponseConfig":{}},
@@ -165,7 +165,11 @@ def recognize(uri, tag):
         st = api("GET", f"https://{HOST}/v2/{op['name']}")
         if st.get("done"):
             if "error" in st: raise SystemExit(f"recognition failed: {st['error']}")
-            json.dump(st, open(f"{WORK}/raw/{tag}.json","w"), ensure_ascii=False)
+            # Write then rename, so a crash mid-write cannot leave a truncated file that
+            # later runs will happily treat as a valid cached response.
+            tmp = f"{WORK}/raw/{tag}.json.tmp"
+            with open(tmp,"w",encoding="utf-8") as fh: json.dump(st, fh, ensure_ascii=False)
+            os.replace(tmp, f"{WORK}/raw/{tag}.json")
             return words_from(st)
 
 def words_from(st):
@@ -263,7 +267,7 @@ for i in range(len(bounds)-1):
 _saved = {os.path.basename(p)[:-5]: p for p in glob.glob(f"{WORK}/raw/*.json")}
 _used = {k: p for k, p in _saved.items() if not (k + "a" in _saved and k + "b" in _saved)}
 for p in _used.values():
-    google_total += len(words_from(json.load(open(p))))
+    google_total += len(words_from(json.load(open(p, encoding="utf-8"))))
 
 # ---------- 4. cues ----------
 MAX_CHARS, MAX_DUR, PAUSE = 84, 6.0, 0.7
@@ -298,6 +302,6 @@ json.dump({"video":os.path.basename(VIDEO),"minutes":round(total/60,2),"chunks":
            "boundaries_snapped_to_silence":snapped,"google_words":google_total,
            "subtitle_words":sub_words,"cues":len(cues),
            "speech_density_pct":round(speech/total*100,1)},
-          open(f"{WORK}/report.json","w"), indent=2, ensure_ascii=False)
+          open(f"{WORK}/report.json","w",encoding="utf-8"), indent=2, ensure_ascii=False)
 sh(GCLOUD,"storage","rm","-q","--recursive",*ACCOUNT,f"gs://{BUCKET}/{PREFIX}")
 log("removed uploaded audio")
