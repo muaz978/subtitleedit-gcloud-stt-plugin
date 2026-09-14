@@ -3,3 +3,4 @@ obj/
 dist/
 *.user
 .DS_Store
+__pycache__/
