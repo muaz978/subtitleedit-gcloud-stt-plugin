@@ -27,6 +27,8 @@ CHUNK, MAX_SNAP = 1080.0, 40.0
 assert CHUNK + 60 + MAX_SNAP <= 1200
 MAX_WORD, MAX_REPEATS = 5.0, 2
 CHUNK_POLL = 10.0
+MAX_RECUT_DEPTH = 3   # a troubled truncation tail may re-cut itself again this many times over;
+                      # dur > 240 halving each round already bounds it, this is a second guard
 
 def log(m):
     line = f"[{time.strftime('%H:%M:%S')}] {m}"
@@ -2059,12 +2061,17 @@ class Episode:
 
         bad_ratio = fixed / max(1, len(legacy))
         anomalous = looped > 40 or bad_ratio > 0.15
-        # A truncation tail (mid_speech) can be as troubled as the chunk it continues: one 924 s
-        # tail looped 224 of 627 words, and repair packed the real dialogue it still had to place
-        # into cues a few milliseconds long, yet a tail's own depth (1, not 0) kept it from ever
-        # getting the same re-cut a fresh chunk gets. So a tail gets that one-time re-cut too; a
-        # plain split half does not get a second one, which leaves that case exactly as measured.
-        if anomalous and (depth == 0 or (depth == 1 and mid_speech)) and dur > 240:
+        # A truncation tail (mid_speech) can be as troubled as the chunk it continues, and re-
+        # cutting it once does not always settle it: one 924 s tail (depth 1) looped 224 of 627
+        # words, and its own re-cut half (depth 2) was STILL anomalous (46 of 275) and packed a
+        # real 52-word passage into cues a few milliseconds long, because only depth 0 and 1 got
+        # this same one-time-per-span re-cut a fresh chunk gets. A tail now gets it at any depth;
+        # dur > 240 already halves away to nothing within a few rounds, and MAX_RECUT_DEPTH bounds
+        # it explicitly too. A plain split half still only gets it once, at depth 0, which leaves
+        # that case exactly as measured (a broader version of this once let a split half re-cut a
+        # second time, and it changed an already-shipped episode's output that had never needed
+        # one).
+        if anomalous and (depth == 0 or (mid_speech and depth <= MAX_RECUT_DEPTH)) and dur > 240:
             # Recognition is deterministic, so resending the same audio changes nothing.
             # Cutting somewhere else does. Split at the quietest point near the middle.
             mid_t = start + dur/2
