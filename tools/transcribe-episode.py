@@ -809,6 +809,11 @@ _ARABIC_FOLD = str.maketrans("أإآٱىةؤئ", "اااايهوي")
 # eh, hi (Turkish dotless), hmm. Only whole keys match, so ya, huwa, hiya, la and "o" stay words.
 _INTERJECTION = re.compile("^(?:ا+|ا*ه+|ا*و+ه+|(?:ها){2,}"
                            "|a+h*|o+h+|u+h+|e+h+|(?:h+[aıu]+)+h*|h+m+|m+h*m+)$")
+# A bumper screen with generic outro music, in a stretch recovery goes looking for speech in,
+# twice produced a bracket fragment of the model's own hidden instructions to itself ("MUSIC]",
+# "BACKGROUND]") instead of a transcript: as of 2026-09, the request never sees this text, so it
+# can only be the model's own prompt leaking through. See has_content.
+_LEAKED_TOKENS = frozenset({"music", "background", "nospeech", "silence"})
 _warned = set()
 
 def warn_once(key, message):
@@ -856,11 +861,20 @@ def is_interjection(word, lang=""):
     return bool(key) and _INTERJECTION.match(key) is not None
 
 def has_content(word, lang):
-    """A letter or a digit. For Arabic-script languages: Arabic letters and no Latin ones, or a
-    number. Music comes back as stray marks and Latin fragments (a "6Y" was inserted under a song),
-    while a number is real speech."""
+    """A letter or a digit, and not one of the model's own leaked instructions or a token mixing
+    Latin and Cyrillic letters: over a bumper screen's outro music, one recovery run inserted
+    "MUSIC]" and "BACKGROUND]" as if they were spoken, and another a single word half Latin half
+    Cyrillic ("B\u043f\u0440\u043e\u0447\u0435\u043c"), none of them real speech in any language. The bracket has to still be
+    there: an ordinary word that happens to spell "music" or "background" is real speech, only a
+    stray half of one of the model's own bracket tags is not. For Arabic-script languages: Arabic
+    letters and no Latin ones, or a number. Music also comes back as stray marks and Latin
+    fragments (a "6Y" was inserted under a song), while a number is real speech."""
+    bare = re.sub(r"[\W_]+", "", word)
+    if ("[" in word or "]" in word) and bare.casefold() in _LEAKED_TOKENS:
+        return False
+    if any("a" <= ch.casefold() <= "z" for ch in bare) and any("\u0400" <= ch <= "\u04ff" for ch in bare):
+        return False
     if lang.split("-")[0].lower() in ("ar", "fa", "ur"):
-        bare = re.sub(r"[\W_]+", "", word)
         if bare and all(unicodedata.category(ch) == "Nd" for ch in bare):
             return True
         arabic = any("\u0600" <= ch <= "\u06ff" and unicodedata.category(ch) == "Lo" for ch in word)
@@ -2045,7 +2059,12 @@ class Episode:
 
         bad_ratio = fixed / max(1, len(legacy))
         anomalous = looped > 40 or bad_ratio > 0.15
-        if anomalous and depth == 0 and dur > 240:
+        # A truncation tail (mid_speech) can be as troubled as the chunk it continues: one 924 s
+        # tail looped 224 of 627 words, and repair packed the real dialogue it still had to place
+        # into cues a few milliseconds long, yet a tail's own depth (1, not 0) kept it from ever
+        # getting the same re-cut a fresh chunk gets. So a tail gets that one-time re-cut too; a
+        # plain split half does not get a second one, which leaves that case exactly as measured.
+        if anomalous and (depth == 0 or (depth == 1 and mid_speech)) and dur > 240:
             # Recognition is deterministic, so resending the same audio changes nothing.
             # Cutting somewhere else does. Split at the quietest point near the middle.
             mid_t = start + dur/2
@@ -2053,7 +2072,9 @@ class Episode:
             mid = min(near, key=lambda q: abs(q-mid_t)) if near else mid_t
             log(f"  {tag}: ANOMALY ({looped} looped, {bad_ratio*100:.0f}% timings bad), re-cutting at {mid/60:.1f} min")
             record["used"] = False
-            aw, ae, al = self.transcribe_span(start, mid, tag+"a", depth+1)
+            # The first half starts exactly where this span did, so a tail's still starts on
+            # speech rather than silence; the second half starts fresh at a chosen quiet point.
+            aw, ae, al = self.transcribe_span(start, mid, tag+"a", depth+1, mid_speech=mid_speech)
             bw, be, bl = self.transcribe_span(mid, end, tag+"b", depth+1)
             off = mid - start
             return aw + shifted(bw, off), ae + shifted_events(be, off), al + shifted_events(bl, off)

@@ -1003,6 +1003,27 @@ class RecoveredNoise(unittest.TestCase):
         res = self.classify([(170.0, 170.3, "6Y"), (171.0, 171.4, "100"), (172.0, 172.4, "٦٦")])
         self.assertEqual([x["w"] for x in res["new"]], ["100", "٦٦"])
 
+    def test_leaked_model_instructions_are_filtered_in_any_language(self):
+        # A bumper screen's outro music produced literal fragments of the model's own hidden
+        # instructions to itself instead of a transcript, in both an Arabic and a Turkish gap.
+        res = self.classify([(170.0, 170.3, "MUSIC]"), (171.0, 171.4, "شامه")])
+        self.assertEqual([x["w"] for x in res["new"]], ["شامه"])
+        res = self.classify([(170.0, 170.3, "BACKGROUND]"), (171.0, 171.4, "Tüh"), (171.5, 171.8, "be.")], "tr-TR")
+        self.assertEqual([x["w"] for x in res["new"]], ["Tüh", "be."])
+
+    def test_an_ordinary_word_that_spells_a_leaked_token_is_not_filtered(self):
+        # Only a stray half of the model's own bracket tag is filtered: someone actually saying
+        # "music" or "background", with no bracket left on it, is real speech.
+        res = self.classify([(170.0, 170.3, "Music."), (171.0, 171.4, "background"), (172.0, 172.4, "Şey.")], "tr-TR")
+        self.assertEqual([x["w"] for x in res["new"]], ["Music.", "background", "Şey."])
+
+    def test_word_mixing_latin_and_cyrillic_letters_is_filtered(self):
+        # Real speech over another music bumper came back as "Bip" (kept: an ordinary-looking Latin
+        # token) next to "Bпрочем", one word splicing Latin B onto a Cyrillic word: no language
+        # mixes scripts inside one token like that.
+        res = self.classify([(170.0, 170.3, "Bip."), (171.0, 171.4, "Bпрочем."), (172.0, 172.4, "Aslanlar!")], "tr-TR")
+        self.assertEqual([x["w"] for x in res["new"]], ["Bip.", "Aslanlar!"])
+
     def test_word_inside_a_silence_is_filtered_only_when_it_kept_its_own_timing(self):
         heard = [{"s": 171.0, "e": 171.5, "w": "كلمة", "est": False, "anchored": True},
                  {"s": 175.0, "e": 175.5, "w": "اخرى", "est": False, "anchored": False}]
@@ -1050,9 +1071,15 @@ class TailOpening(TempWorkMixin, unittest.TestCase):
         parent = [(round(0.5 * i, 2), round(0.5 * i + 0.5, 2), f"w{i}") for i in range(100)] + [(60.0, 60.3, "M")]
         tail = [(None, 0.16, "t1"), (0.16, 0.28, "t2"), (0.28, 0.56, "t3"), (0.56, 1.04, "t4"),
                 (162.88, 162.96, "u"), (186.52, 22.72, "v"), (22.72, 186.64, "x"), (186.68, 186.8, "y"), (330.0, 330.4, "z")]
+        # This tail's own offsets are bad enough (22% of it repaired) to be anomalous on their
+        # own, so it is now re-cut into "ta" and "tb": "ta" starts where the tail did, so it
+        # keeps mid_speech and this test still holds across that split.
+        ta = [(None, 0.16, "t1"), (0.16, 0.28, "t2"), (0.28, 0.56, "t3"), (0.56, 1.04, "t4")]
+        tb = [(0.0, 0.3, "z1")]
         ep = self.episode()
         ep.quiet = []
-        responses = {"part-000": response(parent, billed="400s"), "part-000t": response(tail, billed="341s")}
+        responses = {"part-000": response(parent, billed="400s"), "part-000t": response(tail, billed="341s"),
+                     "part-000ta": response(ta, billed="171s"), "part-000tb": response(tb, billed="171s")}
         ep.span_response = lambda s, e, t: responses[t]
         with mock.patch.object(te, "log"):
             words, _, _ = ep.transcribe_span(0.0, 400.0, "part-000")
@@ -1060,6 +1087,30 @@ class TailOpening(TempWorkMixin, unittest.TestCase):
         resume = 60.3 - 1.0
         for k in ("t1", "t2", "t3", "t4"):
             self.assertLessEqual(placed[k][1], resume + 1.04 + 1e-6, placed[k])
+
+    def test_an_anomalous_tail_is_re_cut_once_and_its_own_split_half_is_not(self):
+        # A tail (depth 1) that loops or breaks as badly as a fresh chunk gets the same one-time
+        # re-cut; the resulting halves (depth 2) do not get a further one, which bounds the cost.
+        parent = [(round(0.5 * i, 2), round(0.5 * i + 0.5, 2), f"w{i}") for i in range(100)] + [(60.0, 60.3, "M")]
+        looped_phrase = [(60.3 + 0.3 * k, 60.3 + 0.3 * k + 0.2, "Ey") for k in range(60)]
+        tail = looped_phrase + [(330.0, 330.4, "z")]
+        ta = [(0.0, 0.3, "a1")]
+        tb = [(0.0, 0.3, "b1")]
+        ep = self.episode()
+        ep.quiet = []
+        responses = {"part-000": response(parent, billed="400s"), "part-000t": response(tail, billed="341s"),
+                     "part-000ta": response(ta, billed="171s"), "part-000tb": response(tb, billed="171s")}
+        ep.span_response = lambda s, e, t: responses[t]
+        tags_asked = []
+        real_span_response = ep.span_response
+        ep.span_response = lambda s, e, t: (tags_asked.append(t), real_span_response(s, e, t))[1]
+        with mock.patch.object(te, "log"):
+            words, _, _ = ep.transcribe_span(0.0, 400.0, "part-000")
+        self.assertIn("part-000ta", tags_asked)
+        self.assertIn("part-000tb", tags_asked)
+        self.assertNotIn("part-000taa", tags_asked)
+        self.assertNotIn("part-000tab", tags_asked)
+        self.assertEqual({w[2] for w in words} & {"a1", "b1"}, {"a1", "b1"})
 
 
 class HeldOperations(TempWorkMixin, unittest.TestCase):
