@@ -1088,9 +1088,9 @@ class TailOpening(TempWorkMixin, unittest.TestCase):
         for k in ("t1", "t2", "t3", "t4"):
             self.assertLessEqual(placed[k][1], resume + 1.04 + 1e-6, placed[k])
 
-    def test_an_anomalous_tail_is_re_cut_once_and_its_own_split_half_is_not(self):
+    def test_an_anomalous_tail_is_re_cut_once_and_a_clean_half_is_not_re_cut_again(self):
         # A tail (depth 1) that loops or breaks as badly as a fresh chunk gets the same one-time
-        # re-cut; the resulting halves (depth 2) do not get a further one, which bounds the cost.
+        # re-cut; a resulting half (depth 2) that is not itself anomalous gets no further one.
         parent = [(round(0.5 * i, 2), round(0.5 * i + 0.5, 2), f"w{i}") for i in range(100)] + [(60.0, 60.3, "M")]
         looped_phrase = [(60.3 + 0.3 * k, 60.3 + 0.3 * k + 0.2, "Ey") for k in range(60)]
         tail = looped_phrase + [(330.0, 330.4, "z")]
@@ -1111,6 +1111,64 @@ class TailOpening(TempWorkMixin, unittest.TestCase):
         self.assertNotIn("part-000taa", tags_asked)
         self.assertNotIn("part-000tab", tags_asked)
         self.assertEqual({w[2] for w in words} & {"a1", "b1"}, {"a1", "b1"})
+
+    def test_a_tails_own_re_cut_half_is_re_cut_again_if_it_is_still_anomalous(self):
+        # The exact shape found live: a long tail loops badly, its own re-cut first half (depth 2,
+        # still mid_speech since it starts where the tail did) is STILL anomalous, and used to
+        # never get a second chance because only depth 0 and 1 qualified. It now does. The episode
+        # is long enough that halving twice still leaves each half over the 240 s floor.
+        total = 700.0
+        parent = [(round(0.5 * i, 2), round(0.5 * i + 0.5, 2), f"w{i}") for i in range(100)] + [(60.0, 60.3, "M")]
+        looped_phrase = [(0.3 * k, 0.3 * k + 0.2, "Ey") for k in range(60)]
+        tail = looped_phrase + [(total - 70.0, total - 69.6, "z")]
+        ta_looped = [(0.3 * k, 0.3 * k + 0.2, "Oh") for k in range(60)]
+        ta = ta_looped + [(300.0, 300.4, "y")]
+        taa, tab = [(0.0, 0.3, "aa1")], [(0.0, 0.3, "ab1")]
+        tb = [(0.0, 0.3, "b1")]
+        ep = self.episode()
+        ep.quiet = []
+        responses = {"part-000": response(parent, billed="400s"), "part-000t": response(tail, billed="641s"),
+                     "part-000ta": response(ta, billed="321s"), "part-000tb": response(tb, billed="321s"),
+                     "part-000taa": response(taa, billed="161s"), "part-000tab": response(tab, billed="161s")}
+        ep.span_response = lambda s, e, t: responses[t]
+        tags_asked = []
+        real_span_response = ep.span_response
+        ep.span_response = lambda s, e, t: (tags_asked.append(t), real_span_response(s, e, t))[1]
+        with mock.patch.object(te, "log"):
+            words, _, _ = ep.transcribe_span(0.0, total, "part-000")
+        self.assertIn("part-000ta", tags_asked)
+        self.assertIn("part-000taa", tags_asked)
+        self.assertIn("part-000tab", tags_asked)
+        self.assertEqual({w[2] for w in words} & {"aa1", "ab1", "b1"}, {"aa1", "ab1", "b1"})
+
+    def test_re_cutting_a_tail_stops_at_max_recut_depth_even_if_still_anomalous(self):
+        # A tail that keeps coming back anomalous no matter how it is cut is a lost cause, not an
+        # excuse to keep spending. Every half here stays well over the 240 s floor, so it is
+        # MAX_RECUT_DEPTH, not dur, that has to be what ends it.
+        total = 5000.0
+        parent = [(round(0.5 * i, 2), round(0.5 * i + 0.5, 2), f"w{i}") for i in range(100)] + [(60.0, 60.3, "M")]
+
+        def looped(width):
+            return [(0.3 * k, 0.3 * k + 0.2, "Ey") for k in range(60)] + [(width - 10.0, width - 9.6, "z")]
+
+        responses = {"part-000": response(parent, billed="400s")}
+        tag, dur = "part-000t", total - 59.3
+        for depth in range(1, te.MAX_RECUT_DEPTH + 3):
+            self.assertGreater(dur, 240.0, "test fixture must stay above the dur floor throughout")
+            responses[tag] = response(looped(dur), billed=f"{int(dur)}s")
+            responses[tag + "b"] = response([(0.0, 0.3, "x")], billed="1s")
+            dur = dur / 2
+            tag = tag + "a"
+        ep = self.episode()
+        ep.quiet = []
+        ep.span_response = lambda s, e, t: responses[t]
+        tags_asked = []
+        real_span_response = ep.span_response
+        ep.span_response = lambda s, e, t: (tags_asked.append(t), real_span_response(s, e, t))[1]
+        with mock.patch.object(te, "log"):
+            ep.transcribe_span(0.0, total, "part-000")
+        deepest = max((t for t in tags_asked if t.startswith("part-000t")), key=len)
+        self.assertLessEqual(len(deepest) - len("part-000t"), te.MAX_RECUT_DEPTH, tags_asked)
 
 
 class HeldOperations(TempWorkMixin, unittest.TestCase):
