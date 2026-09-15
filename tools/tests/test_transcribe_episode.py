@@ -2064,5 +2064,233 @@ class LeftoverRecords(TempWorkMixin, unittest.TestCase):
             self.assertNotIn(secret, text)
 
 
+class PrefetchChunks(TempWorkMixin, unittest.TestCase):
+    """prefetch_chunks() only changes HOW the first response for each top-level chunk is obtained
+    (several recognize() calls running at once instead of one after another); it must never change
+    WHAT span_response() sees afterward, and it must never let a stalled chunk block the others or
+    let an interrupt hang on a background thread Google never told anything to stop."""
+
+    def stubbed(self, ep):
+        ep.deploy = lambda: ("p", "b", "gcloud")
+        ep.claim_prefix = lambda: None
+        ep.cut = lambda s, e, path: path
+        ep.upload = lambda path, tag: "uri-" + tag
+
+    def test_chunks_are_fetched_concurrently_not_one_after_another(self):
+        ep = self.episode()
+        self.stubbed(ep)
+        started, lock = [], threading.Lock()
+        def recognize(s, e, tag):
+            with lock:
+                started.append(time.time())
+            time.sleep(0.2)
+            te.atomic_write(f"{ep.raw}/{tag}.json", json.dumps(response([(0.0, 1.0, tag)])))
+            return None
+        ep.recognize = recognize
+        bounds = [0.0, 10.0, 20.0, 30.0, 40.0]     # 4 chunks
+        with mock.patch.object(te, "log"):
+            t0 = time.time()
+            ep.prefetch_chunks(bounds)
+            elapsed = time.time() - t0
+        # Sequential would be >= 4 * 0.2 = 0.8s; concurrent (4 workers) should finish near 0.2s.
+        self.assertLess(elapsed, 0.6, "chunks were not actually run concurrently")
+        self.assertEqual(len(started), 4)
+        self.assertLess(max(started) - min(started), 0.15, "starts were staggered, not concurrent")
+
+    def test_already_cached_chunks_need_no_fetch_at_all(self):
+        ep = self.episode()
+        self.stubbed(ep)
+        bounds = [0.0, 10.0, 20.0]
+        for i in range(2):
+            ep.save_response(ep.raw, f"part-{i:03d}", bounds[i], bounds[i + 1], response([(0.0, 1.0, f"part-{i:03d}")]))
+        calls = []
+        ep.recognize = lambda s, e, tag: calls.append(tag)
+        with mock.patch.object(te, "log"):
+            ep.prefetch_chunks(bounds)
+        self.assertEqual(calls, [])
+
+    def test_a_fatal_failure_in_one_chunk_propagates_without_hanging(self):
+        ep = self.episode()
+        self.stubbed(ep)
+        def recognize(s, e, tag):
+            if tag == "part-001":
+                raise SystemExit("recognition failed for part-001: quota exceeded")
+            time.sleep(0.05)
+            return None
+        ep.recognize = recognize
+        bounds = [0.0, 10.0, 20.0, 30.0]
+        with mock.patch.object(te, "log"):
+            t0 = time.time()
+            with self.assertRaises(SystemExit):
+                ep.prefetch_chunks(bounds)
+            elapsed = time.time() - t0
+        self.assertLess(elapsed, 2.0, "a fatal failure should not hang waiting on the others")
+
+    def test_stall_warning_fires_once_per_slow_chunk_not_every_round(self):
+        ep = self.episode()
+        self.stubbed(ep)
+        release = threading.Event()
+        def recognize(s, e, tag):
+            if tag == "part-000":
+                release.wait(2.0)
+            te.atomic_write(f"{ep.raw}/{tag}.json", json.dumps(response([(0.0, 1.0, tag)])))
+            return None
+        ep.recognize = recognize
+        bounds = [0.0, 10.0, 20.0]
+        logged = []
+        def capture(msg):
+            logged.append(msg)
+            if len(logged) > 6:      # the slow chunk has been "warned" by now in every real round
+                release.set()
+        with mock.patch.object(te, "CHUNK_POLL", 0.05), mock.patch.object(te, "STALL_WARN_AFTER", 0.1), \
+                mock.patch.object(te, "log", side_effect=capture):
+            ep.prefetch_chunks(bounds)
+        warnings = [m for m in logged if m.startswith("WARNING: part-000 has been pending")]
+        self.assertEqual(len(warnings), 1, warnings)
+
+    def test_stop_event_interrupts_recognize_in_a_worker_thread(self):
+        """The OS only signals the main thread; a worker thread learns of a stop only through
+        _STOP_EVENT, checked inside recognize()'s own poll loop. Simulates the cross-thread case
+        directly: recognize() polling for a response that never arrives, stopped by another thread
+        setting the event, exactly as a real SIGTERM would via _stop()."""
+        ep = self.episode()
+        stub = PieceStub(ep)
+        ep.poll = lambda name, **kw: None    # never answers
+        te._STOP_EVENT.clear()
+        def stop_soon():
+            time.sleep(0.05)
+            te._STOP_CODE[0] = 128 + 15
+            te._STOP_EVENT.set()
+        threading.Thread(target=stop_soon, daemon=True).start()
+        try:
+            with mock.patch.object(te, "CHUNK_POLL", 0.02), mock.patch.object(te, "log"):
+                t0 = time.time()
+                with self.assertRaises(te.Stopped) as caught:
+                    ep.recognize(0.0, 10.0, "part-000")
+                elapsed = time.time() - t0
+        finally:
+            te._STOP_EVENT.clear()
+        self.assertEqual(caught.exception.code, 128 + 15)
+        self.assertLess(elapsed, 1.0, "recognize() did not notice _STOP_EVENT promptly")
+
+    def test_prefetch_then_sequential_pass_matches_a_fully_sequential_run(self):
+        """The strongest proof prefetching changes nothing but speed: run the same chunk data
+        through transcribe_span twice, once via prefetch_chunks first and once fully sequential,
+        and assert byte-for-byte identical words/events/loops and identical accounting."""
+        bounds = [0.0, 10.0, 20.0, 30.0]
+        responses = {f"part-{i:03d}": response([(0.5, 1.5, f"w{i}a"), (2.0, 3.0, f"w{i}b")]) for i in range(3)}
+
+        def build(use_prefetch):
+            work = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+            ep = te.Episode(os.path.join(work, "video.mp4"), os.path.join(work, "out.srt"), work)
+            os.makedirs(ep.raw, exist_ok=True)
+            ep.video_bytes = 1234
+            ep.token = lambda refresh=False: "test-token"
+            self.stubbed(ep)
+            def recognize(s, e, tag):
+                ep.save_response(ep.raw, tag, s, e, responses[tag])
+                return responses[tag]
+            ep.recognize = recognize
+            with mock.patch.object(te, "log"):
+                if use_prefetch:
+                    ep.prefetch_chunks(bounds)
+                out = []
+                for i in range(len(bounds) - 1):
+                    s, e = bounds[i], bounds[i + 1]
+                    words, events, loops = ep.transcribe_span(s, e, f"part-{i:03d}")
+                    out.append((words, events, loops))
+            return out, ep.spans, ep.billed, ep.fetched
+
+        prefetched = build(True)
+        sequential = build(False)
+        self.assertEqual(prefetched, sequential)
+
+
+class StallGivesUpAndRecuts(TempWorkMixin, unittest.TestCase):
+    """The 2026-09-16 incident: batchRecognize operations that simply never answered, at any
+    processing strategy, on both an 18-minute and a freshly resubmitted 3-minute span of the same
+    episode. recognize() must give up after STALL_GIVE_UP_AFTER and transcribe_span must re-cut a
+    Stalled span exactly like an anomalous one, down to STALL_RECUT_FLOOR."""
+
+    def test_recognize_gives_up_after_the_threshold_never_answering(self):
+        ep = self.episode()
+        stub = PieceStub(ep)
+        ep.poll = lambda name, **kw: None    # never answers
+        clock = FakeClock()
+        with mock.patch.object(te, "time", clock), mock.patch.object(te, "log"):
+            with self.assertRaises(te.Stalled) as caught:
+                ep.recognize(0.0, 180.0, "part-034")
+        self.assertEqual(caught.exception.tag, "part-034")
+        self.assertGreater(clock.time() - FakeClock().time(), te.STALL_GIVE_UP_AFTER)
+        # give up drops the op record: a later run must submit fresh, not resume a stale one.
+        self.assertFalse(os.path.exists(f"{ep.raw}/part-034.op.json"))
+
+    def test_a_resumed_operation_already_past_the_threshold_gives_up_almost_at_once(self):
+        """The clock counts from the ORIGINAL submission, not from this process's own start - a
+        kill-and-restart every few minutes must not dodge STALL_GIVE_UP_AFTER forever."""
+        ep = self.episode()
+        clock = FakeClock()
+        te.atomic_write(f"{ep.raw}/part-034.op.json", json.dumps({
+            "name": "op-old", "start_ms": 0, "end_ms": 180000,
+            "submitted": clock.time() - te.STALL_GIVE_UP_AFTER - 60, "prefix": ep.prefix, "attempts": 1}))
+        ep.poll = lambda name, **kw: None
+        with mock.patch.object(te, "time", clock), mock.patch.object(te, "log"):
+            t0 = clock.time()
+            with self.assertRaises(te.Stalled):
+                ep.recognize(0.0, 180.0, "part-034")
+            elapsed = clock.time() - t0
+        self.assertLess(elapsed, te.CHUNK_POLL * 2)
+
+    def test_transcribe_span_recuts_a_stalled_span_like_an_anomalous_one(self):
+        ep = self.episode()
+        ep.quiet = []
+        calls = []
+        def span_response(s, e, tag):
+            calls.append(tag)
+            if tag == "part-000":
+                raise te.Stalled(s, e, tag)
+            return response([(0.5, 1.0, tag + "w")])
+        ep.span_response = span_response
+        with mock.patch.object(te, "log"):
+            words, events, loops = ep.transcribe_span(0.0, 180.0, "part-000")
+        self.assertEqual(calls, ["part-000", "part-000a", "part-000b"])
+        self.assertEqual([w[2] for w in words], ["part-000aw", "part-000bw"])
+        # the stalled parent itself never fed the subtitle and must not count as a used response
+        self.assertEqual([r["used"] for r in ep.spans if r["tag"] == "part-000"], [])
+
+    def test_a_span_still_stalled_at_the_recut_floor_is_reported_not_recut_forever(self):
+        ep = self.episode()
+        ep.quiet = []
+        calls = []
+        def span_response(s, e, tag):
+            calls.append(tag)
+            raise te.Stalled(s, e, tag)
+        ep.span_response = span_response
+        with mock.patch.object(te, "log") as logged:
+            words, events, loops = ep.transcribe_span(0.0, te.STALL_RECUT_FLOOR, "part-000")
+        self.assertEqual(words, [])
+        self.assertEqual(calls, ["part-000"])      # never re-cut below the floor
+        self.assertTrue(any("never answered even at" in str(c.args[0]) for c in logged.call_args_list))
+
+    def test_prefetch_does_not_treat_a_stalled_chunk_as_fatal(self):
+        ep = self.episode()
+        ep.deploy = lambda: ("p", "b", "gcloud")
+        ep.claim_prefix = lambda: None
+        ep.cut = lambda s, e, path: path
+        ep.upload = lambda path, tag: "uri-" + tag
+        def recognize(s, e, tag):
+            if tag == "part-001":
+                raise te.Stalled(s, e, tag)
+            te.atomic_write(f"{ep.raw}/{tag}.json", json.dumps(response([(0.0, 1.0, tag)])))
+        ep.recognize = recognize
+        bounds = [0.0, 10.0, 20.0, 30.0]
+        with mock.patch.object(te, "log"):
+            ep.prefetch_chunks(bounds)   # must not raise
+        self.assertTrue(os.path.exists(f"{ep.raw}/part-000.json"))
+        self.assertFalse(os.path.exists(f"{ep.raw}/part-001.json"))
+        self.assertTrue(os.path.exists(f"{ep.raw}/part-002.json"))
+
+
 if __name__ == "__main__":
     unittest.main()

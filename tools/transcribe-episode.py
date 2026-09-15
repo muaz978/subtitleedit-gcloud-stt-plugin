@@ -18,10 +18,10 @@ long stretches without words are transcribed again in short pieces, cue times go
 that cannot invert or overlap a cue, and each run ends with checks, a report and editor notes.
 """
 import bisect, concurrent.futures, difflib, errno, glob, http.client, json, math, os, re, shutil, signal, socket, statistics
-import subprocess, sys, time, unicodedata, urllib.error, urllib.request
+import subprocess, sys, threading, time, unicodedata, urllib.error, urllib.request
 
 CONFIG_FILE = os.path.expanduser("~/.config/se-stt/config.env")
-CHUNK, MAX_SNAP = 1080.0, 40.0
+CHUNK, MAX_SNAP = float(os.environ.get("SE_STT_CHUNK", "") or 1080.0), 40.0
 # Google caps word timestamps at 20 minutes per file, and the boundary loop can stretch a chunk
 # by the 60 s it refuses to leave as a tail plus MAX_SNAP.
 assert CHUNK + 60 + MAX_SNAP <= 1200
@@ -29,6 +29,17 @@ MAX_WORD, MAX_REPEATS = 5.0, 2
 CHUNK_POLL = 10.0
 MAX_RECUT_DEPTH = 3   # a troubled truncation tail may re-cut itself again this many times over;
                       # dur > 240 halving each round already bounds it, this is a second guard
+PREFETCH_WORKERS = 4      # matches the recovery-piece upload pool; no evidence a higher number helps
+STALL_WARN_AFTER = 8 * 60.0     # a chunk pending this long with no answer gets one WARNING, not silence
+# A live incident (2026-09-16) found batchRecognize operations that simply never answered, at any
+# processing strategy, on both an 18-minute and a 3-minute span of the same episode - not a failed
+# response, no response ever, indefinitely. A fresh resubmission of the exact same span stalled the
+# same way twice; a smaller re-cut span of the same audio succeeded. STALL_GIVE_UP_AFTER is how long
+# recognize() waits before treating that as the same kind of problem an anomalous response is: re-cut
+# and try smaller, down to STALL_RECUT_FLOOR, below which a still-stalled span is reported as an
+# unrecovered gap rather than re-cut forever or guessed at from another source.
+STALL_GIVE_UP_AFTER = 12 * 60.0
+STALL_RECUT_FLOOR = 45.0
 
 def log(m):
     line = f"[{time.strftime('%H:%M:%S')}] {m}"
@@ -134,6 +145,24 @@ class Stopped(BaseException):
     def __init__(self, code):
         super().__init__(code)
         self.code = code
+
+class Stalled(Exception):
+    """recognize() gave up: Google never answered within STALL_GIVE_UP_AFTER, at any processing
+    strategy, however many times the operation was resumed - not a failure response, no response at
+    all. An ordinary Exception, unlike Stopped: transcribe_span catches this and re-cuts the span,
+    the same recovery an anomalous response gets, rather than letting it end the run."""
+    def __init__(self, start, end, tag):
+        super().__init__(f"{tag} ({start:.0f}-{end:.0f}s) never answered within {STALL_GIVE_UP_AFTER/60:.0f} min")
+        self.start, self.end, self.tag = start, end, tag
+
+# The OS delivers a signal to the main thread only, where _stop() raises Stopped directly and
+# interrupts whatever the main thread is blocked on (e.g. time.sleep), same as always. A worker
+# thread prefetching a chunk concurrently never receives that signal at all, so without this it
+# would just keep polling Google on its own for as long as recognize()'s loop runs, however long
+# that is - exactly the kind of stall this pipeline should never silently sit through. _STOP_EVENT
+# lets any thread notice a stop within one poll interval regardless of which thread the OS signalled.
+_STOP_EVENT = threading.Event()
+_STOP_CODE = [0]
 
 def lost_answer(e):
     """Why a response could not be read, without the partial body an IncompleteRead carries."""
@@ -263,6 +292,15 @@ def cache_problem(st, start_ms, end_ms, lang, model, video_bytes):
     if not -0.05 <= billed - span_s <= 1.05:
         return f"it covers {billed:.0f} s, not the {span_s:.2f} s span"
     return None
+
+def quiet_midpoint(quiet, start, end):
+    """Where to split a span that needs re-cutting, anomalous or stalled alike: the nearest detected
+    silence within 60 s of the middle, or the exact middle when nothing that quiet is nearby.
+    Recognition is deterministic, so resending the same audio changes nothing; cutting somewhere
+    else does."""
+    mid_t = start + (end - start) / 2
+    near = [q for q in quiet if abs(q - mid_t) <= 60 and start + 60 < q < end - 60]
+    return min(near, key=lambda q: abs(q - mid_t)) if near else mid_t
 
 # ---------- words ----------
 def collapse(ws, loops=None):
@@ -1573,6 +1611,10 @@ class Episode:
         self.lang = _need("SE_STT_LANGUAGE")
         self.region = os.environ.get("SE_STT_REGION", "us").strip() or "us"
         self.model = os.environ.get("SE_STT_MODEL", "chirp_3").strip() or "chirp_3"
+        # DYNAMIC_BATCHING is cheaper but queues behind Google's own load, sometimes for a long
+        # time. Override to PROCESSING_STRATEGY_UNSPECIFIED (or omit the field) for immediate
+        # processing at standard pricing when a run cannot wait out a busy queue.
+        self.strategy = os.environ.get("SE_STT_PROCESSING_STRATEGY", "DYNAMIC_BATCHING").strip() or "DYNAMIC_BATCHING"
         # Optional. When set, every gcloud call is pinned to it, so a run never depends on whichever
         # account happens to be active. Register the key once with:
         #   gcloud auth activate-service-account --key-file=/path/to/key.json
@@ -1593,6 +1635,11 @@ class Episode:
         self.pending = set()        # op files this run wrote or resumed that still await a response
         self.spans = []             # one record per recognized span, for the word accounting
         self.billed, self.fetched, self.reused = 0.0, 0, 0
+        # Only prefetch_chunks() runs recognize() from more than one thread at a time; every other
+        # caller is single-threaded and never contends on this. Guards the read-modify-write spots
+        # a concurrent chunk fetch actually touches: the token cache, claim_prefix()'s check-and-set,
+        # and the billed/fetched/reused counters.
+        self._lock = threading.Lock()
 
     # ----- processes -----
     def run_proc(self, args):
@@ -1673,16 +1720,17 @@ class Episode:
         """One token per half hour instead of one gcloud process per request. A token gcloud cannot
         give is a RequestFailed without a status, like an unreachable Google: a resumed operation
         must not be given up, and recovery must not submit piece after piece, because of it."""
-        if refresh or self._token is None or time.time() - self._token_at > 1800:
-            gcloud = self.deploy()[2]
-            try:
-                self._token = self.sh(gcloud, "auth", "print-access-token", *self.account).stdout.strip()
-            except RequestFailed:
-                raise
-            except SystemExit as e:
-                raise RequestFailed(f"could not get an access token: {e.code}")
-            self._token_at = time.time()
-        return self._token
+        with self._lock:
+            if refresh or self._token is None or time.time() - self._token_at > 1800:
+                gcloud = self.deploy()[2]
+                try:
+                    self._token = self.sh(gcloud, "auth", "print-access-token", *self.account).stdout.strip()
+                except RequestFailed:
+                    raise
+                except SystemExit as e:
+                    raise RequestFailed(f"could not get an access token: {e.code}")
+                self._token_at = time.time()
+            return self._token
 
     def api(self, method, url, body=None, attempts=5, timeout=120):
         """Retries rate limits, server errors and dropped connections, including a response lost on
@@ -1753,7 +1801,7 @@ class Episode:
         body = {"config":{"autoDecodingConfig":{},"languageCodes":[self.lang],"model":self.model,
                 "features":{"enableWordTimeOffsets":True,"enableAutomaticPunctuation":True}},
                 "files":[{"uri":uri}],"recognitionOutputConfig":{"inlineResponseConfig":{}},
-                "processingStrategy":"DYNAMIC_BATCHING"}
+                "processingStrategy":self.strategy}
         name = self.api("POST", f"https://{self.host}/v2/projects/{project}/locations/{self.region}/recognizers/_:batchRecognize", body)["name"]
         # Written right after submitting, so a crash or Ctrl+C resumes this operation instead of
         # paying for the same audio again. The prefix and uri say which uploaded audio it still needs.
@@ -1835,15 +1883,19 @@ class Episode:
         st["_span"] = {"start_ms": ms(start), "end_ms": ms(end), "language": self.lang,
                        "model": self.model, "video_bytes": self.video_bytes}
         atomic_write(f"{folder}/{tag}.json", json.dumps(st, ensure_ascii=False))
-        self.fetched += 1
-        self.billed += billed_seconds(st) or 0.0
+        with self._lock:
+            self.fetched += 1
+            self.billed += billed_seconds(st) or 0.0
         self.drop_op(f"{folder}/{tag}.op.json")
 
     def recognize(self, start, end, tag):
-        """One span, cut, uploaded, submitted and polled until done, resuming an interrupted run."""
+        """One span, cut, uploaded, submitted and polled until done, resuming an interrupted run.
+        Gives up and raises Stalled after STALL_GIVE_UP_AFTER of the operation - fresh or resumed -
+        never answering at all, so a restart cannot dodge the threshold by resetting the clock."""
         folder = self.raw
         op = self.resumable(folder, tag, start, end)
         name, resumed = (op["name"], True) if op else (None, False)
+        started = float(op["submitted"]) if op else None
         if resumed:
             log(f"  {tag}: resuming the operation an interrupted run left")
         while True:
@@ -1852,7 +1904,17 @@ class Episode:
                 self.deploy()
                 self.claim_prefix()
                 name = self.submit(folder, tag, start, end, self.upload(local, tag))
+                if started is None:
+                    started = time.time()
             time.sleep(CHUNK_POLL)
+            if _STOP_EVENT.is_set():
+                # Only matters when this call is running in a prefetch worker thread: the main
+                # thread's own stop already raised Stopped there directly, same as before this
+                # existed. A no-op for the ordinary single-threaded call.
+                raise Stopped(_STOP_CODE[0])
+            if time.time() - started > STALL_GIVE_UP_AFTER:
+                self.drop_op(f"{folder}/{tag}.op.json")
+                raise Stalled(start, end, tag)
             try:
                 st = self.poll(name)
             except RequestFailed as e:
@@ -2040,13 +2102,83 @@ class Episode:
             return st
         return self.recognize(start, end, tag)
 
+    def prefetch_chunks(self, bounds):
+        """Ask Google for every top-level chunk's first-pass recognition at once, before the
+        sequential pass below asks for them one at a time. Each answer lands in the same on-disk
+        cache span_response() already checks first, so a chunk that turns out not to need a
+        re-cut is instant there; only the rare anomalous chunk still re-cuts and fetches its own
+        halves one at a time, exactly as before - this only changes how the FIRST answer for each
+        chunk is obtained, never what transcribe_span decides to do with it.
+
+        Unlike a recovery piece, a chunk here is never silently abandoned: recognize() itself
+        already polls until it succeeds, gives up with Stalled, or fatally fails, whichever thread
+        runs it. This only runs several of those calls at once instead of one after another, and
+        logs one WARNING (well before any give-up) per chunk that is taking unusually long, since
+        nothing outside the process was watching for that until now. A Stalled chunk is not treated
+        as fatal here - it is simply not cached yet when this returns, so the sequential pass below
+        asks for it again through span_response(), and transcribe_span re-cuts it if it stalls again."""
+        tags = [(f"part-{i:03d}", bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
+        todo = [(tag, s, e) for tag, s, e in tags if self.cached(self.raw, tag, s, e) is None]
+        if len(todo) <= 1:
+            return   # nothing to gain from concurrency for zero or one chunk left to fetch
+        # Claimed once, up front, on this thread: claim_prefix() is main-thread-only by contract,
+        # and every worker below calls it again through recognize(), where it is now always a
+        # cheap no-op read of self.claimed rather than a second, racing check-and-set.
+        self.deploy()
+        self.claim_prefix()
+        log(f"  prefetching {len(todo)} chunk(s) concurrently")
+        started = time.time()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(PREFETCH_WORKERS, len(todo)))
+        try:
+            jobs = {pool.submit(self.recognize, s, e, tag): (tag, time.time()) for tag, s, e in todo}
+            pending, warned = set(jobs), set()
+            while pending:
+                done, pending = concurrent.futures.wait(pending, timeout=CHUNK_POLL,
+                                                         return_when=concurrent.futures.FIRST_COMPLETED)
+                for job in done:
+                    try:
+                        job.result()
+                    except Stalled as e:
+                        tag = jobs[job][0]
+                        log(f"  {tag}: STALLED during prefetch, will be re-cut in the sequential pass ({e})")
+                now = time.time()
+                for job in pending:
+                    tag, since = jobs[job]
+                    elapsed = now - since
+                    if elapsed > STALL_WARN_AFTER and tag not in warned:
+                        log(f"WARNING: {tag} has been pending {elapsed/60:.0f} min with no result from "
+                            f"Google yet, unusually slow (still waiting, nothing here is skipped)")
+                        warned.add(tag)
+        finally:
+            # Always waited out, never cancelled: a worker thread left running after this function
+            # returns would still be polling Google with no one watching it, and cancel_futures only
+            # drops queued work anyway, not a call already in flight. _STOP_EVENT (set by _stop(),
+            # checked inside recognize()'s own loop) is what makes an interrupt here end promptly.
+            pool.shutdown(wait=True)
+        log(f"  prefetch done in {(time.time() - started) / 60:.1f} min")
+
     # ----- chunks -----
     def transcribe_span(self, start, end, tag, depth=0, mid_speech=False):
         """Recognize one span, re-cutting it once if the result looks anomalous. mid_speech marks a
         truncation tail, which starts on speech rather than in silence.
         Returns (words, events, loops), all in span time."""
         dur = end - start
-        st = self.span_response(start, end, tag)
+        try:
+            st = self.span_response(start, end, tag)
+        except Stalled:
+            # Google never answered at all, not just a bad one - re-cut and try smaller regardless
+            # of depth or mid_speech, down to STALL_RECUT_FLOOR. Below that, stop guessing: report
+            # the gap instead of re-cutting forever or reaching for a different source for it.
+            if dur <= STALL_RECUT_FLOOR:
+                log(f"WARNING: {tag} ({clock(start)}-{clock(end)}) never answered even at "
+                    f"{dur:.0f} s; leaving this stretch unrecovered rather than guess at it")
+                return [], [], []
+            mid = quiet_midpoint(self.quiet, start, end)
+            log(f"  {tag}: STALLED, re-cutting at {mid/60:.1f} min")
+            aw, ae, al = self.transcribe_span(start, mid, tag+"a", depth+1, mid_speech=mid_speech)
+            bw, be, bl = self.transcribe_span(mid, end, tag+"b", depth+1)
+            off = mid - start
+            return aw + shifted(bw, off), ae + shifted_events(be, off), al + shifted_events(bl, off)
         raw, filled = words_from_raw(st), words_from(st)
         record = {"tag": tag, "start": start, "end": end, "words": len(filled), "looped": 0, "dropped": 0, "used": True}
         self.spans.append(record)
@@ -2072,11 +2204,7 @@ class Episode:
         # second time, and it changed an already-shipped episode's output that had never needed
         # one).
         if anomalous and (depth == 0 or (mid_speech and depth <= MAX_RECUT_DEPTH)) and dur > 240:
-            # Recognition is deterministic, so resending the same audio changes nothing.
-            # Cutting somewhere else does. Split at the quietest point near the middle.
-            mid_t = start + dur/2
-            near = [q for q in self.quiet if abs(q-mid_t) <= 60 and start+60 < q < end-60]
-            mid = min(near, key=lambda q: abs(q-mid_t)) if near else mid_t
+            mid = quiet_midpoint(self.quiet, start, end)
             log(f"  {tag}: ANOMALY ({looped} looped, {bad_ratio*100:.0f}% timings bad), re-cutting at {mid/60:.1f} min")
             record["used"] = False
             # The first half starts exactly where this span did, so a tail's still starts on
@@ -2249,6 +2377,8 @@ class Episode:
         # full.flac can be a little shorter than the container; pieces cut past its end come back empty
         audio_end = min(total, full_dur)
         try:
+            if os.environ.get("SE_STT_PREFETCH", "").strip() != "0":
+                self.prefetch_chunks(bounds)
             before, self.timing_events, self.loops = [], [], []
             for i in range(len(bounds)-1):
                 s, e = bounds[i], bounds[i+1]
@@ -2390,6 +2520,8 @@ class Episode:
         log(f"report: {report_path}")
 
 def _stop(signum, frame):
+    _STOP_CODE[0] = 128 + signum
+    _STOP_EVENT.set()
     raise Stopped(128 + signum)
 
 USAGE = "usage: transcribe-episode.py <video> [output.srt] [work-dir]"
