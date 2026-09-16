@@ -30,15 +30,19 @@ CHUNK_POLL = 10.0
 MAX_RECUT_DEPTH = 3   # a troubled truncation tail may re-cut itself again this many times over;
                       # dur > 240 halving each round already bounds it, this is a second guard
 PREFETCH_WORKERS = 4      # matches the recovery-piece upload pool; no evidence a higher number helps
-STALL_WARN_AFTER = 8 * 60.0     # a chunk pending this long with no answer gets one WARNING, not silence
+STALL_WARN_AFTER = 3 * 60.0     # a chunk pending this long with no answer gets one WARNING, not silence
 # A live incident (2026-09-16) found batchRecognize operations that simply never answered, at any
 # processing strategy, on both an 18-minute and a 3-minute span of the same episode - not a failed
 # response, no response ever, indefinitely. A fresh resubmission of the exact same span stalled the
-# same way twice; a smaller re-cut span of the same audio succeeded. STALL_GIVE_UP_AFTER is how long
-# recognize() waits before treating that as the same kind of problem an anomalous response is: re-cut
-# and try smaller, down to STALL_RECUT_FLOOR, below which a still-stalled span is reported as an
-# unrecovered gap rather than re-cut forever or guessed at from another source.
-STALL_GIVE_UP_AFTER = 12 * 60.0
+# same way twice; a smaller re-cut span of the same audio succeeded, and fast: both re-cut halves of
+# the stuck 3-minute span answered in under 20 s each, while three merely-slow chunks that were left
+# to finish on their own that same night took most of the way to 10 min. Re-cutting is not a quality
+# tradeoff - a re-cut span gets the exact same recognition, just smaller - so there is little reason
+# to wait long before trying it: STALL_GIVE_UP_AFTER is how long recognize() waits before treating a
+# non-answer as the same kind of problem an anomalous response is, re-cutting and trying smaller down
+# to STALL_RECUT_FLOOR, below which a still-stalled span is reported as an unrecovered gap rather than
+# re-cut forever or guessed at from another source.
+STALL_GIVE_UP_AFTER = 5 * 60.0
 STALL_RECUT_FLOOR = 45.0
 
 def log(m):
