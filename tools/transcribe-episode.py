@@ -30,18 +30,20 @@ CHUNK_POLL = 10.0
 MAX_RECUT_DEPTH = 3   # a troubled truncation tail may re-cut itself again this many times over;
                       # dur > 240 halving each round already bounds it, this is a second guard
 PREFETCH_WORKERS = 4      # matches the recovery-piece upload pool; no evidence a higher number helps
-STALL_WARN_AFTER = 3 * 60.0     # a chunk pending this long with no answer gets one WARNING, not silence
+STALL_WARN_AFTER = 3 * 60.0     # an operation Google has held this long with no answer gets one WARNING
 # A live incident (2026-09-16) found batchRecognize operations that simply never answered, at any
 # processing strategy, on both an 18-minute and a 3-minute span of the same episode - not a failed
 # response, no response ever, indefinitely. A fresh resubmission of the exact same span stalled the
 # same way twice; a smaller re-cut span of the same audio succeeded, and fast: both re-cut halves of
-# the stuck 3-minute span answered in under 20 s each, while three merely-slow chunks that were left
-# to finish on their own that same night took most of the way to 10 min. Re-cutting is not a quality
-# tradeoff - a re-cut span gets the exact same recognition, just smaller - so there is little reason
-# to wait long before trying it: STALL_GIVE_UP_AFTER is how long recognize() waits before treating a
-# non-answer as the same kind of problem an anomalous response is, re-cutting and trying smaller down
-# to STALL_RECUT_FLOOR, below which a still-stalled span is reported as an unrecovered gap rather than
-# re-cut forever or guessed at from another source.
+# the stuck 3-minute span answered in under 20 s each. Healthy operations answer in about a tenth of
+# their audio's length (measured 2026-09-20: 18-minute chunks came back in 111-137 s). Re-cutting is
+# not a quality tradeoff - a re-cut span gets the exact same recognition, just smaller - so there is
+# little reason to wait long before trying it: STALL_GIVE_UP_AFTER is how long recognize() waits
+# before treating a non-answer as the same kind of problem an anomalous response is, re-cutting and
+# trying smaller down to STALL_RECUT_FLOOR, below which a still-stalled span is reported as an
+# unrecovered gap rather than re-cut forever or guessed at from another source. Both clocks run from
+# the moment the operation reached Google, never from when a chunk was queued locally: timing from
+# the queue once reported chunks that had not been sent yet as "pending with Google".
 STALL_GIVE_UP_AFTER = 5 * 60.0
 STALL_RECUT_FLOOR = 45.0
 
@@ -1894,12 +1896,16 @@ class Episode:
 
     def recognize(self, start, end, tag):
         """One span, cut, uploaded, submitted and polled until done, resuming an interrupted run.
-        Gives up and raises Stalled after STALL_GIVE_UP_AFTER of the operation - fresh or resumed -
-        never answering at all, so a restart cannot dodge the threshold by resetting the clock."""
+        Warns once after STALL_WARN_AFTER, and gives up and raises Stalled after STALL_GIVE_UP_AFTER,
+        of the operation - fresh or resumed - never answering at all. Both count from when the
+        operation reached Google (the original submission for a resumed one), so a restart cannot
+        dodge the threshold by resetting the clock, and time spent waiting for a free worker or for
+        the upload is never blamed on Google."""
         folder = self.raw
         op = self.resumable(folder, tag, start, end)
         name, resumed = (op["name"], True) if op else (None, False)
         started = float(op["submitted"]) if op else None
+        warned = False
         if resumed:
             log(f"  {tag}: resuming the operation an interrupted run left")
         while True:
@@ -1916,9 +1922,14 @@ class Episode:
                 # thread's own stop already raised Stopped there directly, same as before this
                 # existed. A no-op for the ordinary single-threaded call.
                 raise Stopped(_STOP_CODE[0])
-            if time.time() - started > STALL_GIVE_UP_AFTER:
+            held = time.time() - started
+            if held > STALL_GIVE_UP_AFTER:
                 self.drop_op(f"{folder}/{tag}.op.json")
                 raise Stalled(start, end, tag)
+            if held > STALL_WARN_AFTER and not warned:
+                warned = True
+                log(f"WARNING: {tag} has been with Google {held/60:.0f} min with no result, unusually slow "
+                    f"(still waiting; gives up and re-cuts after {STALL_GIVE_UP_AFTER/60:.0f} min)")
             try:
                 st = self.poll(name)
             except RequestFailed as e:
@@ -2116,11 +2127,12 @@ class Episode:
 
         Unlike a recovery piece, a chunk here is never silently abandoned: recognize() itself
         already polls until it succeeds, gives up with Stalled, or fatally fails, whichever thread
-        runs it. This only runs several of those calls at once instead of one after another, and
-        logs one WARNING (well before any give-up) per chunk that is taking unusually long, since
-        nothing outside the process was watching for that until now. A Stalled chunk is not treated
-        as fatal here - it is simply not cached yet when this returns, so the sequential pass below
-        asks for it again through span_response(), and transcribe_span re-cuts it if it stalls again."""
+        runs it. This only runs several of those calls at once instead of one after another. The
+        slow-answer WARNING lives in recognize(), on the operation's own clock: a chunk here can
+        wait in this pool for a free worker, which says nothing about Google. A Stalled chunk is not
+        treated as fatal here - it is simply not cached yet when this returns, so the sequential
+        pass below asks for it again through span_response(), and transcribe_span re-cuts it if it
+        stalls again."""
         tags = [(f"part-{i:03d}", bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
         todo = [(tag, s, e) for tag, s, e in tags if self.cached(self.raw, tag, s, e) is None]
         if len(todo) <= 1:
@@ -2134,8 +2146,8 @@ class Episode:
         started = time.time()
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(PREFETCH_WORKERS, len(todo)))
         try:
-            jobs = {pool.submit(self.recognize, s, e, tag): (tag, time.time()) for tag, s, e in todo}
-            pending, warned = set(jobs), set()
+            jobs = {pool.submit(self.recognize, s, e, tag): tag for tag, s, e in todo}
+            pending = set(jobs)
             while pending:
                 done, pending = concurrent.futures.wait(pending, timeout=CHUNK_POLL,
                                                          return_when=concurrent.futures.FIRST_COMPLETED)
@@ -2143,16 +2155,7 @@ class Episode:
                     try:
                         job.result()
                     except Stalled as e:
-                        tag = jobs[job][0]
-                        log(f"  {tag}: STALLED during prefetch, will be re-cut in the sequential pass ({e})")
-                now = time.time()
-                for job in pending:
-                    tag, since = jobs[job]
-                    elapsed = now - since
-                    if elapsed > STALL_WARN_AFTER and tag not in warned:
-                        log(f"WARNING: {tag} has been pending {elapsed/60:.0f} min with no result from "
-                            f"Google yet, unusually slow (still waiting, nothing here is skipped)")
-                        warned.add(tag)
+                        log(f"  {jobs[job]}: STALLED during prefetch, will be re-cut in the sequential pass ({e})")
         finally:
             # Always waited out, never cancelled: a worker thread left running after this function
             # returns would still be polling Google with no one watching it, and cancel_futures only

@@ -2126,27 +2126,37 @@ class PrefetchChunks(TempWorkMixin, unittest.TestCase):
             elapsed = time.time() - t0
         self.assertLess(elapsed, 2.0, "a fatal failure should not hang waiting on the others")
 
-    def test_stall_warning_fires_once_per_slow_chunk_not_every_round(self):
+    def test_recognize_warns_once_on_the_operations_own_clock(self):
+        """One WARNING when Google has held an operation past STALL_WARN_AFTER - once, not every poll
+        round - and the call still finishes normally when the answer arrives before the give-up."""
+        ep = self.episode()
+        PieceStub(ep)
+        clock = FakeClock()
+        answer = response([(0.0, 1.0, "bir")])
+        arrive = clock.time() + te.STALL_WARN_AFTER + 60       # well past the warning, before the give-up
+        ep.poll = lambda name, **kw: answer if clock.time() >= arrive else None
+        with mock.patch.object(te, "time", clock), mock.patch.object(te, "log") as logged:
+            st = ep.recognize(0.0, 180.0, "part-004")
+        self.assertIs(st, answer)
+        warnings = [str(c.args[0]) for c in logged.call_args_list if "with Google" in str(c.args[0])]
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("part-004", warnings[0])
+
+    def test_a_chunk_waiting_for_a_free_worker_is_not_reported_as_slow_at_google(self):
+        """The false alarm seen live on 2026-09-20: prefetch timed each chunk from when it was queued,
+        so chunks not yet sent to Google were reported as pending there. With one worker and three
+        chunks, prefetch_chunks itself must say nothing about slowness however long the queue waits."""
         ep = self.episode()
         self.stubbed(ep)
-        release = threading.Event()
         def recognize(s, e, tag):
-            if tag == "part-000":
-                release.wait(2.0)
+            time.sleep(0.15)
             te.atomic_write(f"{ep.raw}/{tag}.json", json.dumps(response([(0.0, 1.0, tag)])))
-            return None
         ep.recognize = recognize
-        bounds = [0.0, 10.0, 20.0]
-        logged = []
-        def capture(msg):
-            logged.append(msg)
-            if len(logged) > 6:      # the slow chunk has been "warned" by now in every real round
-                release.set()
-        with mock.patch.object(te, "CHUNK_POLL", 0.05), mock.patch.object(te, "STALL_WARN_AFTER", 0.1), \
-                mock.patch.object(te, "log", side_effect=capture):
-            ep.prefetch_chunks(bounds)
-        warnings = [m for m in logged if m.startswith("WARNING: part-000 has been pending")]
-        self.assertEqual(len(warnings), 1, warnings)
+        with mock.patch.object(te, "PREFETCH_WORKERS", 1), mock.patch.object(te, "CHUNK_POLL", 0.02), \
+                mock.patch.object(te, "STALL_WARN_AFTER", 0.05), mock.patch.object(te, "log") as logged:
+            ep.prefetch_chunks([0.0, 10.0, 20.0, 30.0])
+        slow = [str(c.args[0]) for c in logged.call_args_list if "unusually slow" in str(c.args[0])]
+        self.assertEqual(slow, [])
 
     def test_stop_event_interrupts_recognize_in_a_worker_thread(self):
         """The OS only signals the main thread; a worker thread learns of a stop only through
