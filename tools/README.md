@@ -32,6 +32,9 @@ gcloud auth activate-service-account --key-file=/path/to/key.json
 The account needs Cloud Speech Client on the project and read/write on the bucket. Bucket
 level admin is not required: the script only ever reads, writes and deletes objects.
 
+The reasoning behind the settings below, and what can go wrong with this model, is collected in
+[../docs/lessons.md](../docs/lessons.md). Read it once before a first long run.
+
 ## Running it
 
 ```bash

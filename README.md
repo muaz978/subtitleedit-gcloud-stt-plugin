@@ -58,6 +58,22 @@ Subtitle Edit's `Plugins` folder, or use **Plugins, Manage plugins, Get plugins 
 
 The plugin replaces the current subtitle with the transcription, as one undo step.
 
+## Read this before a long transcription
+
+[docs/lessons.md](docs/lessons.md) is the field guide to transcribing with this model: what to do,
+what to avoid, and what can come back wrong even when a job reports success. It covers setup,
+language codes, audio preparation, chunking, stalls, the known failure modes and how to recognise
+them, repairs, and how to review a result. The five rules in short:
+
+1. Cut audio in silence, never by the clock.
+2. Never resend identical audio, because the answer is deterministic. Change the cut instead.
+3. Success does not mean complete. Check coverage and read the notes.
+4. A bad timestamp is not a bad word. Repair the timing, do not delete the word.
+5. One language code, one source.
+
+The guide also lists which of these the Python tool and the Subtitle Edit plugin handle for you.
+For long or difficult audio, the Python tool in [tools/](tools/README.md) carries more of the guards.
+
 ## Cost
 
 Google bills per minute of audio.
