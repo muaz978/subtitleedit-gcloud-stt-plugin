@@ -132,6 +132,42 @@ Watch for these traps in a fresh read:
   fresh read too.
 - A name in a fresh read can be a mishearing of a name the episode uses consistently. Keep the
   episode's own name.
+- Judge a fresh read only away from its piece edges (about 6 seconds). The first words of a piece can
+  be placed at the piece start, so a "displaced" result at an edge, or in only one of two cuts, is
+  an artifact.
+- A fresh read can have a hole of its own, where the subtitle is right. Before deleting words the
+  fresh read lacks, read the stretch again with the pieces cut elsewhere.
+
+### A second full re-read and a vote (when quality matters more than speed)
+
+The tool's checks can pass while many cues still have a wrong word, because one long recognition
+words some sentences worse than a short fresh read. One fresh read is only one hypothesis. Two reads
+that agree with each other against the subtitle are strong evidence. When there is time (about an
+hour and about 1 US dollar more per episode), do this:
+
+1. **Read A.** Cut the whole recording into pieces of about 150 seconds, at the widest gaps of the
+   subtitle itself (its pauses are real silences), and send them all in one call as in the snippet
+   above. Add a few overlapping pieces around anything suspicious.
+2. **Read B.** Do it again with every cut shifted by half a piece, at least 30 seconds from any cut of
+   read A, so every word is read in a different context.
+3. **List proposals.** Align the subtitle with each read inside each piece, ignoring the 6 seconds at
+   each edge. Propose an edit only where both reads differ from the subtitle in the same place and
+   agree with each other. A typical episode gives 100 to 250 proposals, many of them harmless
+   variants.
+4. **Review them.** One reviewer per group of about 20 proposals, each with the evidence (the exact
+   cue text, both reads' lines around it, the show's names) and written rules: both reads must agree,
+   the new wording must read better in the scene, ignore variants, take wording only from the reads,
+   delete only where both reads are silent and the words are implausible, flag what cannot be
+   settled. Then three skeptics per reviewer, each with a different lens (natural language, the
+   evidence, the structure of the subtitle), try to refute every edit. Keep an edit only when at
+   least two of the three agree, and read the dissent of every split vote yourself (in the episode
+   below it was right in 6 of the 7 split votes).
+5. **Apply** with the method of section 6, and run all the final checks of section 9 again.
+
+In one episode where the tool's checks had passed, this changed 116 of 2,624 cues (about 100 were
+wording fixes, the rest a displaced first word, a duplicated stretch, three unsupported flash cues and
+a stray description), and it left about 100 places for a listener. Use the checks of section 8
+instead when a team is waiting.
 
 ## 6. Patch the subtitle safely
 
@@ -206,8 +242,10 @@ Be exact about what was not checked. Do not describe a stretch as clean unless i
 Nothing below is detected or repaired by the tool yet. Each would be a small, tested change built
 from observed values (see the habits at the end of [lessons.md](lessons.md)):
 
+- a built-in second full re-read with a vote and a patch helper (the steps are in section 5, the
+  scripts that did it are not in this repository yet)
 - a replayed passage (earlier text again, with matching per-word offsets, squeezed to near zero
-  duration)
+  duration), and telling it from a clip the show itself repeats
 - the true position of a displaced block
 - runs of the same short word at near-zero duration
 - cues in a stray script

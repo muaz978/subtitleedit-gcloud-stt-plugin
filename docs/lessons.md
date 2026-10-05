@@ -189,6 +189,10 @@ clean.
   recording's length. Insert only words that are really missing.
 - **Watch for:** the slow-chunk warning can be a false alarm caused by silence or music. Count words
   per window in a fresh re-check before concluding speech is missing.
+- **Watch for:** a fresh re-check can have a hole of its own. One piece came back with a minute of real
+  speech missing, which made 80 subtitle words look invented. Before deleting, read the same stretch
+  again with the pieces cut at other places. Only when two independent reads are both empty is it
+  safe to call the subtitle's words unsupported.
 
 ### Replayed speech
 An earlier passage is replayed, squeezed into a few seconds, usually at the end of a chunk, and
@@ -202,6 +206,13 @@ sometimes followed by genuinely new content. It can include stray characters fro
   of the first part, just before the cut, and in a repeat scan every hit shows the same time offset
   (here about 8 minutes). What is genuinely said where the copy sits is a different scene: read that
   span fresh, in two overlapping windows (two reads that agree are strong evidence), and insert it.
+- **Watch for:** one constant offset between two copies is not always a replay by the recognizer. A
+  show can repeat a clip itself: a flashback, a recap, a recording played back. Tell them apart before
+  deleting anything. A recognizer cannot copy text from one response into another, so two copies in
+  different chunks are the show's. Then check that two independent fresh reads, cut at other places,
+  both hear the speech at both times. The second copy is often followed by a new line (a reaction),
+  which settles it. Copies inside one response, with identical per-word offsets or squeezed to almost
+  no time, are the recognizer's.
 
 ### Displaced blocks
 A whole run of words is placed minutes away from where it was spoken (blocks of dozens of words, off
@@ -224,18 +235,44 @@ spoken.
   to spell the same thing.
 
 ### Head-of-piece artifacts
-A word at the very start of a short piece can come back with no start time.
+A word at the very start of a short piece can come back with no start time. The first words of a piece
+can also be placed at the piece start although they are said later.
 - **Do:** take its time from its neighbours, not from the piece.
+- **Do:** judge a fresh read only away from its piece edges (about 6 seconds). A "displaced" flag that
+  shows only near an edge, or in only one of two cuts of the same audio, is an artifact. In one
+  episode 13 such flags were raised and 3 were real.
 
 ### Weak recovered text
 Text from the gap-filling pass is the least reliable. It produced wrong proper names (a familiar
 character name replaced by a different, more common word) and wrong whole phrases.
 - **Do:** review recovered text first, and check every proper name against its use in the rest of the
   recording.
+- **Watch for:** the gap-filling pass can fill a stretch with the neighbouring phrase repeated (a
+  doubled run of words next to the same words in the cue before) and still miss a real line. Compare
+  recovered words with their neighbours, and with a fresh read of the stretch.
 
 ### Cross-piece disagreement
-Chunks processed in parallel can spell the same word two ways.
+Chunks processed in parallel can spell the same word two ways. One character's name came out in three
+spellings in a single episode.
 - **Do:** run a consistency pass over names and spellings after assembly.
+- **Do:** if the production keeps term sheets or a character list, read them before judging a doubtful
+  name. Change a name only where a fresh read supports it, and list every other place for a listener,
+  because a name taken from a list alone is a guess.
+
+### Wording that differs between reads
+The first pass, which is one long recognition, can word a sentence worse than a short fresh read, and
+two short reads can word it differently from each other.
+- **Do:** treat one fresh read as one hypothesis, not as proof. Change wording only where two fresh
+  reads, cut at different places, agree with each other against the first pass AND the new wording
+  reads better in the scene. Where they disagree with each other, keep the first pass and flag the
+  place.
+- **Do:** ignore variants that do not change meaning (spelling of fillers and interjections,
+  punctuation, a case ending the audio cannot decide).
+- **Watch for:** a hybrid of the two reads. If both reads hear one verb form, do not keep the
+  first pass's different form inside a change that takes the rest from the reads.
+- **Watch for:** loud group speech, such as chanting or people talking over each other. Two
+  recognizers will give different readings or none. Flag the place for a listener, and write no text
+  you cannot support.
 
 ## Repairing
 
@@ -291,8 +328,13 @@ Finish with these checks:
 - A **full-recording repeat scan** (for example six-word sequences that repeat with a gap over about
   20 seconds). After targeted fixes it flagged only real repeats such as songs, choruses and chants.
 - A structural check for overlapping or out-of-order cues.
+- A list of cues under about 0.3 seconds. Delete one when neither of two fresh reads hears its words
+  (it is both unsupported and unreadable). Keep one whose words both reads hear, and list it in the
+  notes: it is real speech that the neighbouring cues squeezed, and there is usually no room to
+  lengthen it.
 - Verify every cue number you mention against the final file before you write it into notes. Cue
-  numbers move when you delete or add cues.
+  numbers move when you delete or add cues, so build the notes from a map of original to final
+  numbers.
 
 ## Cost and time
 
