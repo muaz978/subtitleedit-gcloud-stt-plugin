@@ -6,6 +6,8 @@ For AI assistants and for people. Claude Code reads CLAUDE.md, which points here
 
 - To transcribe a video or audio file, follow docs/episode-workflow.md with tools/transcribe-episode.py.
   Read docs/lessons.md once before a first long run.
+- For a recording where two languages alternate (a host and a guest, say), use tools/transcribe-broadcast.py
+  instead, and read the section about it in tools/README.md first. The same rules about the key apply.
 - Run the tool on the user's own machine, with the user's own settings. Never ask for the service
   account key, never paste it into a conversation, and never print its contents.
 - If you cannot run commands, help the user work through the notes file the tool wrote, using

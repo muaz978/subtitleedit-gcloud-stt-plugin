@@ -90,7 +90,8 @@ If you run long or difficult audio, prefer the Python tool: it carries the guard
 **Watch for**
 - Mixed-language audio. Run a language per pass and reconcile, rather than asking one pass to do both.
   The primary-language pass tends to transliterate the other language into its own script, and a pass
-  in the other language can translate instead of transcribe.
+  in the other language can translate instead of transcribe. `tools/transcribe-broadcast.py` implements
+  this: see [tools/README.md](../tools/README.md#a-programme-in-two-languages-transcribe-broadcastpy).
 - Google's documentation lists word timestamps as unsupported for `chirp_3`. In practice they are
   returned, but keep the guard that fails loudly if they ever stop, rather than silently falling back
   to timings spread by character count.

@@ -6,6 +6,7 @@ method for checking the result. It does not need Subtitle Edit. Use it the way t
 | You want to | Use | Needs Subtitle Edit? |
 |:--|:--|:--|
 | Transcribe a video or audio file from the command line | [The standalone tool](#the-standalone-tool) | No |
+| Transcribe a recording where two languages alternate, with speaker labels | [The two language tool](#two-languages-in-one-recording) | No |
 | Do it from inside Subtitle Edit | [Subtitle Edit](#in-subtitle-edit): built in, or this plugin | Yes |
 | Have an AI assistant (Claude, ChatGPT, others) run it and check the result | [With an AI assistant](#with-an-ai-assistant) | No |
 
@@ -67,6 +68,21 @@ A run writes the subtitle next to the video, a notes file that says what to chec
 
 A rerun that reuses the saved responses is free. A 2.5 hour episode costs about 0.5 to 0.8 US dollars,
 recovery included, and takes 15 to 40 minutes. See [Cost](#cost).
+
+## Two languages in one recording
+
+[tools/transcribe-broadcast.py](tools/README.md#a-programme-in-two-languages-transcribe-broadcastpy) is a second standalone
+tool, for a recording where two languages alternate: an interview with a host in Arabic and a guest answering in English,
+say. It builds on the first tool's guards. It recognizes the audio once per language, adds a third pass in short windows
+to get speaker labels, then decides the language of each stretch word by word from the first two. It writes a subtitle, a
+word level JSON file with language and speaker on every word, an events file and a notes file.
+
+```bash
+python3 tools/transcribe-broadcast.py "interview.wav" "out/interview" "out/work"
+```
+
+It needs the same setup as the first tool. Because it runs three recognition jobs, billed audio is about three and a half
+times the recording's length, so expect roughly that multiple of the cost in the [Cost](#cost) table below.
 
 ## In Subtitle Edit
 

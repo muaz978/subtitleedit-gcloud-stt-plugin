@@ -1,5 +1,8 @@
 # Transcribing an episode
 
+This page covers `transcribe-episode.py`, for a recording in one language. For a recording where two
+languages alternate, see [A programme in two languages](#a-programme-in-two-languages-transcribe-broadcastpy).
+
 ## Prerequisites
 
 Python 3.9 or newer, plus `ffmpeg`, `ffprobe` and the Google Cloud CLI on PATH. Works on macOS,
@@ -256,3 +259,39 @@ python3 -B -m unittest discover tools/tests
 
 (`python` on Windows.) The tests use synthetic data only: no network, no media, no gcloud. `-B`
 keeps Python from leaving `__pycache__` folders in the repository.
+
+## A programme in two languages: transcribe-broadcast.py
+
+For a recording where two languages alternate (an interview with an Arabic-speaking host and a guest answering in
+English, say), `transcribe-broadcast.py` produces three files next to the output base name you give it:
+
+- `<base>.words.json`: every word with its start and end in seconds, the language it was spoken in (`lang`), a
+  speaker label (`speaker`), the subtitle line it landed in (`line`), and flags where they apply (`lowConfidence`,
+  `recalled` for words recovered on a second pass, `filler` for "uh", `speakerGuess`).
+- `<base>.events.json`: sound events, the audible gaps behind them, stretches in the language that is not the
+  programme's (`foreign`), and words the two readings disagree on (`crossCheck`).
+- `<base>.srt`, and `<base> - transcription notes.md` with what to listen to.
+
+```bash
+python3 tools/transcribe-broadcast.py "interview.wav" "out/interview" "out/work"
+BC_SPEAKERS=2 BC_COMPILE_ONLY=1 python3 tools/transcribe-broadcast.py "interview.wav" "out/interview" "out/work"   # recompile from saved responses
+```
+
+The settings are the episode tool's (`SE_STT_PROJECT`, `SE_STT_BUCKET` and so on). `BC_SPEAKERS=2` merges the
+speaker labels into two people, `BC_BASE_LANG` (default `ar`) says which language is the programme's, and
+`SE_STT_CHUNK` overrides the 10 minute cut the two language runs use.
+
+How it works, and what was measured, in short:
+
+- The file is recognized as Arabic and again as English, each through the episode tool's protected pipeline. The
+  Arabic run never translates: real Arabic stays Arabic and English comes back transliterated. The English run
+  sometimes translates Arabic speech into English and sometimes writes English in Arabic letters, so the language of
+  each stretch is decided word by word from both runs, weighing the Arabic run more.
+- chirp_3 accepts speaker diarization for English but not for any Arabic locale (tested in four regions), and a
+  diarized request of more than a few minutes comes back cut short. So a third job recognizes the audio as English in
+  three minute windows that overlap by one minute, with diarization on, and the speakers are followed from window to
+  window by who speaks in the shared audio. Windows that still come back short, or never come back, are split.
+- English the long run skipped, or wrote in Arabic letters, is filled from those short windows.
+- A recording longer than 20 minutes has to be cut, because batch recognition refuses longer files.
+- It runs three recognition jobs, and the diarized one overlaps its windows by a third, so billed audio is about three and a
+  half times the recording's length before any recovery. The last line of the notes says how many seconds were billed.
