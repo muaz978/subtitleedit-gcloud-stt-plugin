@@ -71,6 +71,7 @@ What each flag usually means, and what we do:
 | Flag | What it usually is | What we do |
 |:--|:--|:--|
 | Words at a chunk start moved by a large shift | Often correct, for example the first line after opening titles or music. Sometimes a second or two off. | Compare with a fresh re-check. Retime only if it is off by more than about half a second. |
+| The log says a chunk was truncated and its tail re-sent | The splice can hold a replay of a scene from elsewhere. | Read a fresh window on each side of the cut time, and look for one constant offset in the repeat scan. |
 | Many words moved, or a block "past the end of its chunk" | A replayed copy of earlier dialogue squeezed into a few seconds, or a displaced block. | Section 5. Delete the copy, keep the first real pass, retime the genuine lines at the join. |
 | One word moved by a small amount | Noise. | Leave it. |
 | Recovered stretch ("N words recovered") | The weakest text in the file: wrong words and wrong proper names. | Re-check first. Compare every name with its use in the rest of the episode. |
@@ -171,7 +172,8 @@ chunk. This usually takes 10 to 15 minutes after the run. Say in the notes what 
 - No cue is inverted, out of order or overlapping. Record the final cue and word counts.
 - A full-file repeat scan: six-word sequences that repeat with a gap of more than about 20 seconds.
   After the targeted fixes, expect only real repeats such as songs, choruses, chants and a line
-  echoed on purpose. Look at the cue pacing of each hit before dismissing it.
+  echoed on purpose. A run of hits that all share the same time offset is a replay,
+  not a repeat. Look at the cue pacing of each hit before dismissing it.
 - Every cue number and time quoted in the notes matches the final file.
 - The notes contain no em dashes or en dashes.
 

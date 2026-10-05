@@ -197,6 +197,10 @@ sometimes followed by genuinely new content. It can include stray characters fro
 - **Do:** treat the copy as a hallucination. Delete it, then retime the genuine content after it from
   a fresh re-check of that span. Do not trust the first copy word for word either, because it can be
   garbled too.
+- **Watch for:** a replay at the splice where a truncated chunk was re-sent. The copy sits at the end
+  of the first part, just before the cut, and in a repeat scan every hit shows the same time offset
+  (here about 8 minutes). What is genuinely said where the copy sits is a different scene: read that
+  span fresh, in two overlapping windows (two reads that agree are strong evidence), and insert it.
 
 ### Displaced blocks
 A whole run of words is placed minutes away from where it was spoken (blocks of dozens of words, off
@@ -208,6 +212,8 @@ by 100 to 300 seconds).
 Music, chanting and silence can produce confident but invented text, including cues in the wrong
 script. Sighs and laughs get transcribed as words.
 - **Do:** treat cues over music as suspect, and a fresh piece that finds nothing there as the answer.
+  The exception is singing. A fresh read can miss lyrics sung over music, so check whether the same
+  lines come back later in the recording (a theme song does) before deleting them.
 - **Do:** drop a word that sits inside detected silence and looks like a duplicate.
 
 ### Leaked model internals
