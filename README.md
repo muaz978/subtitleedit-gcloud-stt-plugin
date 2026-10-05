@@ -74,6 +74,12 @@ them, repairs, and how to review a result. The five rules in short:
 The guide also lists which of these the Python tool and the Subtitle Edit plugin handle for you.
 For long or difficult audio, the Python tool in [tools/](tools/README.md) carries more of the guards.
 
+## Running an episode from start to finish
+
+[docs/episode-workflow.md](docs/episode-workflow.md) is the step by step way of working we use: run the
+tool, read what it flags, re-check each flagged stretch with a fresh short request, patch the
+subtitle safely, and write the notes. It describes the method only and names no recording.
+
 ## Cost
 
 Google bills per minute of audio.
