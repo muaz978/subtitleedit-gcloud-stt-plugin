@@ -1,35 +1,29 @@
-# Google Cloud Speech-to-Text for Subtitle Edit 5
+# Transcribe long audio and video with Google Speech-to-Text (chirp_3)
 
-> ### This is now built into Subtitle Edit. You probably do not need this plugin.
->
-> Subtitle Edit 5 ships **Google Cloud Speech-to-Text** as a built-in engine. Pick it under
-> **Video, Audio to text**, in the same list as Whisper and the other online engines. It uses
-> the same API, the same `chirp_3` model and the same word level timings this plugin used,
-> and it needs no 40 MB download.
->
-> The work here was merged upstream instead:
-> [#14561](https://github.com/SubtitleEdit/subtitleedit/pull/14561) added the engine,
-> [#14567](https://github.com/SubtitleEdit/subtitleedit/pull/14567) brought over the audio
-> format, the cue building from word timings and the reliability guards below, and
-> [#14582](https://github.com/SubtitleEdit/subtitleedit/pull/14582) adds sign-in with
-> `gcloud` for organisations that do not allow service account keys.
->
-> This repository stays up for the testing evidence in
-> [docs/testing-evidence.md](docs/testing-evidence.md), which documents the defects found in
-> Google's API across three full episodes and is the reasoning behind the guards now running
-> in Subtitle Edit itself. The v1.0.0 release still works, but the built-in engine is better
-> maintained and produces the same results.
+Real word level timings, guards against the ways this API fails on long recordings, and a worked
+method for checking the result. It does not need Subtitle Edit. Use it the way that suits you:
 
+| You want to | Use | Needs Subtitle Edit? |
+|:--|:--|:--|
+| Transcribe a video or audio file from the command line | [The standalone tool](#the-standalone-tool) | No |
+| Do it from inside Subtitle Edit | [Subtitle Edit](#in-subtitle-edit): built in, or this plugin | Yes |
+| Have an AI assistant (Claude, ChatGPT, others) run it and check the result | [With an AI assistant](#with-an-ai-assistant) | No |
 
-A Subtitle Edit 5 plugin that transcribes the open video with Google Cloud
-Speech-to-Text v2, using **real word level timings**.
+All three rest on two guides, written as rules, with nothing specific to one recording:
 
-That is the whole point. Online transcription engines that return text only force
-Subtitle Edit to infer cue times by splitting text proportionally to character count,
-which cannot represent silence. On a 145 minute episode that produces a subtitle
-claiming 97.4% speech density with zero pauses over two seconds. The same audio through
-Speech-to-Text v2 measures 57.2% density with 313 real pauses, and leaves the opening
-theme correctly empty.
+- [docs/lessons.md](docs/lessons.md): what to expect from the model, what can come back wrong even when
+  a job reports success, and how to recognise and repair it.
+- [docs/episode-workflow.md](docs/episode-workflow.md): the step by step way of working: run the tool,
+  read what it flags, re-check each flagged stretch with a fresh short request, patch the subtitle
+  safely, and write the notes.
+
+## Why word level timings
+
+Online transcription engines that return text only force a subtitle editor to infer cue times by
+splitting text proportionally to character count, which cannot represent silence. On a 145 minute
+episode that produces a subtitle claiming 97.4% speech density with zero pauses over two seconds. The
+same audio through Speech-to-Text v2 measures 57.2% density with 313 real pauses, and leaves the
+opening theme correctly empty.
 
 ## What you need
 
@@ -37,19 +31,69 @@ theme correctly empty.
 2. A **service account JSON key**. Speech-to-Text v2 refuses API keys outright:
    `401, API keys are not supported by this API. Expected OAuth2 access token.`
    Create one under IAM and Admin, Service Accounts, Keys, Add key, Create new key, JSON.
-3. Two roles on that service account:
-   - **Cloud Speech Client**, to transcribe.
-   - **Storage Admin**, so the plugin can create and manage its own staging bucket.
-     BatchRecognize reads from Cloud Storage only, so long audio has no inline path.
-4. **ffmpeg**. The plugin uses whichever copy Subtitle Edit already uses and does not
-   bundle its own. If Subtitle Edit can extract a waveform, this plugin can extract audio.
+3. Roles on that service account: **Cloud Speech Client**, plus read and write on one Cloud Storage
+   bucket. BatchRecognize reads from Cloud Storage only, so long audio has no inline path. The plugin
+   can create its own bucket and then needs **Storage Admin**; the standalone tool only reads, writes
+   and deletes objects, so object level access on one bucket is enough.
+4. **ffmpeg**.
 
-## Installing
+Keep the key out of version control, chat and screenshots. Share its path, never its contents.
 
-Download the zip for your platform from the releases page and either extract it into
-Subtitle Edit's `Plugins` folder, or use **Plugins, Manage plugins, Get plugins online**.
+## The standalone tool
 
-## Using it
+[tools/transcribe-episode.py](tools/README.md) turns a video or audio file into a subtitle with no
+Subtitle Edit involved. It needs Python 3.9 or newer, `ffmpeg`, `ffprobe` and the Google Cloud CLI, and
+nothing else to install: it uses the standard library only. It runs on macOS, Linux and Windows.
+
+```bash
+git clone https://github.com/muaz978/subtitleedit-gcloud-stt-plugin.git
+cd subtitleedit-gcloud-stt-plugin
+python3 tools/transcribe-episode.py "episode.mp4"      # on Windows: python
+```
+
+Put your project, bucket and language in a small settings file once (see
+[tools/README.md](tools/README.md#setup-once)). The language is a setting, not a built-in: set
+`SE_STT_LANGUAGE` to `tr-TR`, `ar-XA`, `en-US` or any other code `chirp_3` accepts.
+
+A run writes the subtitle next to the video, a notes file that says what to check by ear, and a
+`report.json` with the same findings in machine readable form. On the way it:
+
+- cuts the audio in silence into chunks under the 20 minute limit, never by the clock
+- sends several chunks at once, and gives up on a hung request and re-cuts it smaller
+- detects a chunk Google cut short while reporting success, and re-sends the missing tail
+- finds stretches with no words and sends them again in short pieces, to recover skipped speech
+- collapses hallucinated loops and repairs impossible word timings
+- builds cues on real pauses, runs its own checks and writes the notes
+
+A rerun that reuses the saved responses is free. A 2.5 hour episode costs about 0.5 to 0.8 US dollars,
+recovery included, and takes 15 to 40 minutes. See [Cost](#cost).
+
+## In Subtitle Edit
+
+> **Subtitle Edit 5 now ships Google Cloud Speech-to-Text as a built-in engine.** Pick it under
+> **Video, Audio to text**, in the same list as Whisper and the other online engines. It uses the
+> same API, the same `chirp_3` model and the same word level timings this plugin used, and it needs
+> no 40 MB download. If you only want to transcribe inside Subtitle Edit, use that.
+>
+> The work here was merged upstream:
+> [#14561](https://github.com/SubtitleEdit/subtitleedit/pull/14561) added the engine,
+> [#14567](https://github.com/SubtitleEdit/subtitleedit/pull/14567) brought over the audio format,
+> the cue building from word timings and the reliability guards below, and
+> [#14582](https://github.com/SubtitleEdit/subtitleedit/pull/14582) adds sign-in with `gcloud` for
+> organisations that do not allow service account keys. The testing evidence behind those guards is in
+> [docs/testing-evidence.md](docs/testing-evidence.md).
+
+The plugin in this repository is a Subtitle Edit 5 plugin that does the same job. The
+[v1.0.0 release](https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/releases/tag/v1.0.0) still
+works, but the built-in engine is better maintained. For long or difficult audio, the standalone tool
+above carries more guards than either (see the table in [docs/lessons.md](docs/lessons.md)).
+
+**Installing the plugin.** Download the zip for your platform from the releases page and either
+extract it into Subtitle Edit's `Plugins` folder, or use **Plugins, Manage plugins, Get plugins
+online**. The plugin uses whichever `ffmpeg` Subtitle Edit already uses. If Subtitle Edit can extract
+a waveform, the plugin can extract audio.
+
+**Using it.**
 
 1. Open a video in Subtitle Edit.
 2. **Plugins, Google Cloud Speech-to-Text**.
@@ -58,27 +102,34 @@ Subtitle Edit's `Plugins` folder, or use **Plugins, Manage plugins, Get plugins 
 
 The plugin replaces the current subtitle with the transcription, as one undo step.
 
-## Read this before a long transcription
+## With an AI assistant
 
-[docs/lessons.md](docs/lessons.md) is the field guide to transcribing with this model: what to do,
-what to avoid, and what can come back wrong even when a job reports success. It covers setup,
-language codes, audio preparation, chunking, stalls, the known failure modes and how to recognise
-them, repairs, and how to review a result. The five rules in short:
+The two guides are written so that an assistant can follow them. How you use them depends on what
+the assistant can do:
+
+- **An assistant that can run commands on your machine** (for example Claude Code, OpenAI Codex, or any
+  agent with a shell). Point it at a clone of this repository and ask: "Read AGENTS.md, then
+  transcribe `<your video>` following docs/episode-workflow.md." It runs the tool with your own
+  settings, reads what the tool flagged, re-checks each flagged stretch, patches the subtitle and
+  writes the notes. Claude Code reads [CLAUDE.md](CLAUDE.md) on its own; Codex and many other agents
+  read [AGENTS.md](AGENTS.md). Both say the same thing.
+- **A chat assistant with no access to your files** (for example ChatGPT in the browser). It cannot run
+  the tool. Paste [docs/lessons.md](docs/lessons.md) into the conversation, then paste the notes file
+  the tool wrote, and ask it to help you work through what to check and how to repair each finding.
+- **Anywhere else.** The guides are plain Markdown. Give them to whatever you use as instructions.
+
+The assistant never needs your key in the conversation. It runs the tool on your machine, where your
+settings and key already are. Do not paste the key file into a chat.
+
+## The five rules
+
+The short version of [docs/lessons.md](docs/lessons.md):
 
 1. Cut audio in silence, never by the clock.
 2. Never resend identical audio, because the answer is deterministic. Change the cut instead.
 3. Success does not mean complete. Check coverage and read the notes.
 4. A bad timestamp is not a bad word. Repair the timing, do not delete the word.
 5. One language code, one source.
-
-The guide also lists which of these the Python tool and the Subtitle Edit plugin handle for you.
-For long or difficult audio, the Python tool in [tools/](tools/README.md) carries more of the guards.
-
-## Running an episode from start to finish
-
-[docs/episode-workflow.md](docs/episode-workflow.md) is the step by step way of working we use: run the
-tool, read what it flags, re-check each flagged stretch with a fresh short request, patch the
-subtitle safely, and write the notes. It describes the method only and names no recording.
 
 ## Cost
 
@@ -89,13 +140,14 @@ Google bills per minute of audio.
 | Dynamic batching (default) | $0.003 | about $0.44 |
 | Standard | $0.016 | about $2.32 |
 
-Dynamic batching is roughly an 81% discount in exchange for a slower turnaround. The
-window shows the estimate for the video you have open before you start.
+Dynamic batching is roughly an 81% discount in exchange for a slower turnaround. Billed audio is
+usually 7 to 50% more than the recording's length, because recovery pieces and re-cuts are billed
+too. The plugin window shows the estimate for the video you have open before you start.
 
-Staged audio is deleted from Cloud Storage when a run finishes, and the bucket carries a
-one day lifecycle rule so an interrupted run cannot leave anything behind.
+Staged audio is deleted from Cloud Storage when a run finishes. The plugin's bucket carries a one day
+lifecycle rule so an interrupted run cannot leave anything behind.
 
-## How it works
+## How the plugin works
 
 1. Extract 16 kHz mono 16 bit FLAC with ffmpeg, then **verify** what was produced.
 2. Split into 18 minute chunks. `chirp_3` caps BatchRecognize at 20 minutes per file when
@@ -113,17 +165,20 @@ Every one of these was written against a defect observed in real runs.
 | Coverage check with recovery | One 18 minute chunk stopped transcribing 6.6 minutes in and discarded the remaining 11.4 minutes **while reporting success**. The plugin detects the shortfall, re-cuts the tail and resubmits it. |
 | Word timing guard | If the model ever returns text without timings, the plugin fails loudly rather than silently degrading to character proportional cues, which is the exact failure it exists to avoid. |
 
+The standalone tool adds more guards, for stalls, loops, silent holes and replayed speech; each is
+explained in [docs/lessons.md](docs/lessons.md).
+
 ## Known limitations
 
 - **Subtitle Edit will not launch any plugin when the subtitle is empty.** Until that
-  changes upstream, add one placeholder line before running this plugin on a fresh video.
+  changes upstream, add one placeholder line before running the plugin on a fresh video.
 - `chirp_3` is served from regional endpoints only, not the global one. The plugin uses
   `us-speech.googleapis.com`.
 - Google's own documentation lists word level timestamps under features `chirp_3` does not
   support. In practice they are returned on every run, and the same page's own text and
   code sample describe enabling them. The guard above exists in case that ever changes.
 
-## Building
+## Building the plugin
 
 ```bash
 ./scripts/publish.sh                 # every platform
