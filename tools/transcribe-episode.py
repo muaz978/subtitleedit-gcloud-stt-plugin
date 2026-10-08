@@ -349,7 +349,9 @@ def repair_legacy(ws, dur):
 # swallowed into the next word. Word ORDER held where the numbers did not (262 of 263 checked
 # words). So ends anchor the placement, order is never changed, and a word whose end cannot be
 # trusted is packed right BEFORE the next trustworthy word, which is where every checked
-# misplaced word belonged.
+# misplaced word belonged (those were words Google had misplaced; a word with a good start and a
+# broken end is different, and packing it there can land it seconds from where it was said, see
+# docs/lessons.md).
 TYP_A, TYP_B, TYP_MAX = 0.08, 0.045, 0.65  # typical spoken duration: 0.08 s + 45 ms per letter, capped
 MAXDUR_A, MAXDUR_B    = 0.25, 0.08         # longest believable word: 0.25 s + 80 ms per letter
 EOF_TOL   = 5.0    # ends up to 5 s past the audio stay anchors and are moved back inside
@@ -581,9 +583,11 @@ def repair(ws, dur, head=True, unanchor=()):
     for g in groups:
         idx = sorted(g["idx"])
         if g["kinds"] == {"outlier"}:
-            # A discarded outlier is usually a broken END with a good start, and the word is placed at
-            # its start: measured against the broken end, one word "moved 327 s" that had not moved.
-            # So each word's move is measured against whichever raw offset it kept.
+            # A discarded outlier is usually a broken END with a good start. Such a word is packed right
+            # before the next anchor (step 5 does not use the start of a word that has no end), not placed
+            # at its own start, so it can land seconds from where it was said. Measured against the broken
+            # end, one word "moved 327 s" that had not moved, so each word's move is measured against
+            # whichever raw offset, the end or the start, the new placement is closer to.
             moved = sorted(min((d for d in (kept[j][1] - E[j] if E[j] is not None else None,
                                             kept[j][0] - S0[j] if S0[j] is not None else None) if d is not None), key=abs)
                            for j in idx if E[j] is not None or S0[j] is not None)

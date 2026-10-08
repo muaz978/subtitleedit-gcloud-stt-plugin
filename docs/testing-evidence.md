@@ -2,7 +2,8 @@
 
 Everything here comes from real runs against the live APIs during development, on Turkish
 TV drama. Figures are marked with where they come from, and anything that did not survive
-re-verification against the raw output has been corrected or dropped rather than repeated.
+re-verification against the raw output has been corrected or dropped rather than repeated. Titles are
+replaced by letters.
 
 ## What was run
 

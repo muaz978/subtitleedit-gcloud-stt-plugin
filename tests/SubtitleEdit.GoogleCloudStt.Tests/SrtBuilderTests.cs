@@ -83,7 +83,11 @@ public sealed class SrtBuilderTests
     [Fact]
     public void BuildCues_AgainstRealEpisodeWordTimings_PreservesSilence()
     {
-        const string path = "/path/to/ground-truth.words.json";
+        // Optional: set SE_STT_GROUND_TRUTH_WORDS to the JSON file (an array of {word, start, end}, in seconds)
+        // with the 13,175 real word timings of the 145 minute episode this test was written against. The test
+        // asserts that word count and then measures speech density against the fixed 8716.98 s duration, so a file
+        // with a different word count fails. Without the variable the test returns early.
+        var path = Environment.GetEnvironmentVariable("SE_STT_GROUND_TRUTH_WORDS") ?? "/path/to/ground-truth.words.json";
         if (!File.Exists(path))
         {
             return; // Ground truth not present on this machine.

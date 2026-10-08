@@ -156,8 +156,8 @@ Google bills per minute of audio.
 
 | Mode | Price per minute | A 2.5 hour episode |
 |:--|:--|:--|
-| Dynamic batching (default) | $0.003 | about $0.44 |
-| Standard | $0.016 | about $2.32 |
+| Dynamic batching (default) | $0.003 | about $0.45 |
+| Standard | $0.016 | about $2.40 |
 
 Dynamic batching is roughly an 81% discount in exchange for a slower turnaround. Billed audio is
 usually 7 to 50% more than the recording's length, because recovery pieces and re-cuts are billed
@@ -212,3 +212,7 @@ the published binary's `--selftest` before packaging it.
 ```bash
 dotnet test tests/SubtitleEdit.GoogleCloudStt.Tests
 ```
+
+Three tests need real media or real word timings and return early without them (they still count as passed).
+Set `SE_STT_SAMPLE_DIR` to a folder of `.mp4` files and `SE_STT_GROUND_TRUTH_WORDS` to the JSON file of word
+timings the ground-truth test was written against, and they run.

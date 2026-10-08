@@ -30,7 +30,8 @@ public sealed class AudioPipelineTests
 
     private static string? FindSampleVideo()
     {
-        var directory = "/path/to/sample/videos";
+        // Optional: set SE_STT_SAMPLE_DIR to a folder of .mp4 files to run the tests that need real media.
+        var directory = Environment.GetEnvironmentVariable("SE_STT_SAMPLE_DIR") ?? "/path/to/sample/videos";
         if (!Directory.Exists(directory))
         {
             return null;
