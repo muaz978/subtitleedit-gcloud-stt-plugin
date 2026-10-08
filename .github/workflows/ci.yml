@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tools:
+    name: Python tools (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile every script
+        run: python -m compileall -q tools
+      - name: Run the tests
+        run: python -B -m unittest discover tools/tests
+
+  dotnet-plugin:
+    name: Plugin build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build tests/SubtitleEdit.GoogleCloudStt.Tests -c Release --nologo
+      - name: Test
+        run: dotnet test tests/SubtitleEdit.GoogleCloudStt.Tests -c Release --no-build --nologo
+
+  hygiene:
+    name: Repository rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: No em dashes or en dashes in documentation, no private keys anywhere
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, sys
+          files = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=True).stdout.splitlines()
+          dashes = (chr(0x2013), chr(0x2014))
+          # The markers are built from pieces so that this file does not contain them.
+          markers = ("BEGIN " + "PRIVATE KEY", "BEGIN RSA " + "PRIVATE KEY", '"private' + '_key"')
+          problems = []
+          for name in files:
+              path = pathlib.Path(name)
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+              if path.suffix == ".md" and any(d in text for d in dashes):
+                  problems.append(name + ": contains an em dash or an en dash")
+              if any(marker in text for marker in markers):
+                  problems.append(name + ": looks like it contains a private key")
+          print("\n".join(problems) or "ok")
+          sys.exit(1 if problems else 0)
+          PY

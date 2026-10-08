@@ -1,0 +1,79 @@
+name: Bug report
+description: Something does not work as described
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report this.
+
+        **Before you paste anything:** remove your service account key, project and bucket names, email addresses, local paths that contain your user name, and any text from a recording that is not public. A short invented example is better than a real transcript.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part is affected?
+      options:
+        - Subtitle Edit plugin
+        - Standalone tool (transcribe-episode.py)
+        - Two language tool (transcribe-broadcast.py)
+        - QC scripts (tools/qc)
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what did you see?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The command or the clicks, and the settings you changed from the defaults (leave out secrets).
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Release or commit, Python version (for the tools), ffmpeg version, Subtitle Edit version (for the plugin).
+      placeholder: "v1.1.0, Python 3.12, ffmpeg 7.1"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or notes file excerpt
+      description: Paste the relevant lines only.
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed keys, project and bucket names, email addresses, personal paths and private transcript text from this report.
+          required: true

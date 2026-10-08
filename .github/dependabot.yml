@@ -1,0 +1,24 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - "/src/SubtitleEdit.GoogleCloudStt"
+      - "/tests/SubtitleEdit.GoogleCloudStt.Tests"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - nuget
+    groups:
+      avalonia:
+        patterns:
+          - "Avalonia*"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github_actions

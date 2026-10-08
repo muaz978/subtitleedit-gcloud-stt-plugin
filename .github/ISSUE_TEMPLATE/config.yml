@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/security/advisories/new
+    about: Please do not open a public issue for a vulnerability. Use a private report instead.
+  - name: Read the guides first
+    url: https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/blob/main/docs/lessons.md
+    about: Many transcription questions are answered in the lessons and the episode workflow.
