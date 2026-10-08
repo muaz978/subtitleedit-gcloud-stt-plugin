@@ -233,6 +233,46 @@ class Robustness(TempWorkMixin, unittest.TestCase):
             ep.cleanup()
         self.assertEqual(te.read_json(f"{self.tmp}/uploads.json"), [])
 
+    def test_only_the_tools_own_upload_folders_count(self):
+        for ours in ("stt/1-2/", "stt/1700000000-4242/", "stt/1700000000-4242-ar/", "stt/1-2-dz/"):
+            self.assertTrue(te.is_own_prefix(ours), ours)
+        for foreign in ("", "/", "*", "stt/", "stt/*", "stt/1-2", "stt/1-2/extra/", "stt/1-2/../", "stt/a-b/", "other/",
+                        "data/stt/1-2/", "gs://b/stt/1-2/", " stt/1-2/", "stt/1-2/ ", "stt/1-2/\n", "stt/1-2-/",
+                        5, None, ["stt/1-2/"], {"p": 1}):
+            self.assertFalse(te.is_own_prefix(foreign), repr(foreign))
+
+    def test_uploads_json_entries_that_are_not_ours_are_ignored_and_never_removed(self):
+        ep = self.episode()
+        ep.uploaded = True
+        te.atomic_write(f"{self.tmp}/uploads.json", json.dumps(["", "other/", "stt/*", "stt/1-2/../x/", "stt/7-8/", 5, None]))
+        ep.deploy = lambda: ("p", "b", "gcloud")
+        removed = []
+        ep.run_proc = lambda args: removed.append(args[-1]) or subprocess.CompletedProcess(args, 0, "", "")
+        with mock.patch.object(te, "log") as logged:
+            ep.cleanup()
+        self.assertEqual(sorted(removed), sorted(["gs://b/stt/7-8/", "gs://b/" + ep.prefix]))
+        self.assertEqual(te.read_json(f"{self.tmp}/uploads.json"), [])
+        said = " ".join(str(c.args[0]) for c in logged.call_args_list)
+        self.assertIn("is not an upload folder made by this tool", said)
+
+    def test_remove_prefix_refuses_anything_that_is_not_ours(self):
+        ep = self.episode()
+        ep.deploy = lambda: ("p", "b", "gcloud")
+        calls = []
+        ep.run_proc = lambda args: calls.append(args) or subprocess.CompletedProcess(args, 0, "", "")
+        with mock.patch.object(te, "log"):
+            for foreign in ("", "/", "*", "other/", "stt/", "stt/*"):
+                self.assertFalse(ep.remove_prefix(foreign), repr(foreign))
+            self.assertTrue(ep.remove_prefix("stt/3-4/"))
+        self.assertEqual([c[-1] for c in calls], ["gs://b/stt/3-4/"])
+
+    def test_uploads_json_that_is_not_a_list_of_names_is_empty(self):
+        ep = self.episode()
+        for text in ('{"stt/1-2/": 1}', '"stt/1-2/"', "not json", '[["stt/1-2/"]]'):
+            te.atomic_write(f"{self.tmp}/uploads.json", text)
+            with mock.patch.object(te, "log"):
+                self.assertEqual(ep.uploads_list(), [], text)
+
     def test_chunk_limit_guard(self):
         self.assertLessEqual(te.CHUNK + 60 + te.MAX_SNAP, 1200)
 

@@ -211,6 +211,15 @@ def read_json(path, default=None):
     except (OSError, ValueError):
         return default
 
+# The only folders this tool ever uploads to: stt/<time>-<process id>/, and the two language tool adds -<job>.
+OWN_PREFIX = re.compile(r"stt/[0-9]+-[0-9]+(?:-[A-Za-z0-9_]+)?/")
+
+def is_own_prefix(prefix):
+    """True only for an upload folder this tool made itself. The removal is recursive, so an empty entry
+    would point at the whole bucket and any other name at somebody else's files; an entry in
+    uploads.json that is not exactly one of ours is never removed."""
+    return isinstance(prefix, str) and OWN_PREFIX.fullmatch(prefix) is not None
+
 # ---------- responses ----------
 def words_from(st):
     out = []
@@ -2254,10 +2263,21 @@ class Episode:
     # ----- cleanup -----
     def uploads_list(self):
         listed = read_json(f"{self.work}/uploads.json", [])
-        return [p for p in listed if isinstance(p, str)] if isinstance(listed, list) else []
+        if not isinstance(listed, list):
+            return []
+        ignored = self.__dict__.setdefault("_ignored_prefixes", set())
+        for p in listed:
+            if not is_own_prefix(p) and repr(p) not in ignored:
+                ignored.add(repr(p))
+                log(f"WARNING: uploads.json lists {redact(repr(p))}, which is not an upload folder made by this tool; "
+                    f"it is ignored and never removed")
+        return [p for p in listed if is_own_prefix(p)]
 
     def remove_prefix(self, prefix):
-        """True when nothing is left under the prefix. Never raises."""
+        """True when nothing is left under the prefix. Never raises, and never touches a folder that is not ours."""
+        if not is_own_prefix(prefix):
+            log(f"WARNING: not removing {redact(repr(prefix))}: it is not an upload folder made by this tool")
+            return False
         try:
             bucket, gcloud = self.deploy()[1:]
             proc = self.run_proc([gcloud, "storage", "rm", "-q", "--recursive", *self.account, f"gs://{bucket}/{prefix}"])
