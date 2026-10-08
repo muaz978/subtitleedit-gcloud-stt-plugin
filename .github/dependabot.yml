@@ -14,6 +14,12 @@ updates:
       avalonia:
         patterns:
           - "Avalonia*"
+    ignore:
+      # Held on purpose. 5.0.0 changes how resumable uploads are validated and raises the Google
+      # authentication libraries for the whole plugin. Adopt it only after a run against a real
+      # bucket shows that uploads and sign in still work.
+      - dependency-name: "Google.Cloud.Storage.V1"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
