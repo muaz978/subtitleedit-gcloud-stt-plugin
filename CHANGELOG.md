@@ -19,6 +19,14 @@ and the releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The plugin's media tests read their sample paths from `SE_STT_SAMPLE_DIR` and
   `SE_STT_GROUND_TRUTH_WORDS`, and return early when those are not set.
 - Comments in the standalone tool about the repair step were corrected, and the README cost table was fixed.
+- Test tooling updated: coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 18.10.1 and xunit.runner.visualstudio
+  4.0.0. The 22 plugin tests run unchanged, and CI now fails if fewer than 20 tests are found.
+- Comments in the plugin that said it ships trimmed were corrected: the builds are not trimmed.
+
+### Fixed
+
+- The standalone tool no longer removes a bucket folder it did not make. Only `stt/<time>-<process id>/`
+  folders listed in `uploads.json` are removed; any other entry is ignored with a warning.
 
 ## [1.1.0] - 2026-10-05
 
