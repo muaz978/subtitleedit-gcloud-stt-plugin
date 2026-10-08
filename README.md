@@ -1,5 +1,7 @@
 # Transcribe long audio and video with Google Speech-to-Text (chirp_3)
 
+[![CI](https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/actions/workflows/ci.yml)
+
 Real word level timings, guards against the ways this API fails on long recordings, and a worked
 method for checking the result. It does not need Subtitle Edit. Use it the way that suits you:
 
@@ -163,8 +165,9 @@ Dynamic batching is roughly an 81% discount in exchange for a slower turnaround.
 usually 7 to 50% more than the recording's length, because recovery pieces and re-cuts are billed
 too. The plugin window shows the estimate for the video you have open before you start.
 
-Staged audio is deleted from Cloud Storage when a run finishes. The plugin's bucket carries a one day
-lifecycle rule so an interrupted run cannot leave anything behind.
+Staged audio is deleted from Cloud Storage when a run finishes. A bucket the plugin creates carries a one day
+lifecycle rule that removes what an interrupted run leaves behind; for a bucket that already existed, add your
+own rule. The [privacy policy](PRIVACY.md) lists the cases where audio can remain.
 
 ## How the plugin works
 
@@ -216,3 +219,11 @@ dotnet test tests/SubtitleEdit.GoogleCloudStt.Tests
 Three tests need real media or real word timings and return early without them (they still count as passed).
 Set `SE_STT_SAMPLE_DIR` to a folder of `.mp4` files and `SE_STT_GROUND_TRUTH_WORDS` to the JSON file of word
 timings the ground-truth test was written against, and they run.
+
+## Project
+
+- [Privacy policy](PRIVACY.md): what the software sends, where it keeps things, and how to remove them.
+- [Security policy](SECURITY.md): how to report a vulnerability, and how to use the software safely.
+- [Contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
+- [Changelog](CHANGELOG.md) and the [releases](https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/releases).
+- [License](LICENSE): MIT.
