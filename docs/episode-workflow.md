@@ -178,7 +178,7 @@ hour and about 1 US dollar more per episode), do this:
    yourself (in the episode below it was right in 6 of the 7 split votes).
 5. **Apply** with the method of section 6, and run all the final checks of section 9 again.
 
-In one episode where the tool's checks had passed, this changed 116 of 2,624 cues (about 100 were
+In one episode where the tool's checks gave only a warning, this changed 116 of 2,624 cues (about 100 were
 wording fixes, the rest a displaced first word, a duplicated stretch, three unsupported flash cues and
 a stray description), and it left about 100 places for a listener. Use the checks of section 8
 instead when a team is waiting.
