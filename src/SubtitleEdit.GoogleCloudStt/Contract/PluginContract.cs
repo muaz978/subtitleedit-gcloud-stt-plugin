@@ -104,10 +104,11 @@ public static class PluginStatus
 /// <summary>
 /// Source generated serialization, mirroring the host's own PluginJsonContext.
 ///
-/// This is not only a performance choice. The plugin ships trimmed, and reflection based
-/// System.Text.Json cannot be statically analysed, so a trimmed build would drop the types
-/// it needs and fail at runtime rather than at build time. Source generation makes the
-/// dependency visible to the trimmer.
+/// This is not only a performance choice. The shipped builds are not trimmed (see
+/// scripts/publish.sh), but reflection based System.Text.Json cannot be statically analysed,
+/// so a trimmed build would drop the types it needs and fail at runtime rather than at build
+/// time. Source generation makes the dependency visible to the trimmer, so the contract
+/// stays correct if trimming is ever switched on.
 /// </summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,

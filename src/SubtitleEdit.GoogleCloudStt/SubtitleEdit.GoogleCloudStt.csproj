@@ -23,10 +23,12 @@
   </ItemGroup>
 
   <!--
-    Trimming note: TrimMode=full silently breaks GoogleCredential.FromJson at runtime
-    (it is a reflection path, so it fails as an exception rather than a build error).
-    The publish script uses TrimMode=partial, which is verified working. Never ship a
-    trimmed build without loading a real credential and issuing one real RPC first.
+    Trimming note: the builds are NOT trimmed (scripts/publish.sh sets PublishTrimmed=false).
+    TrimMode=full silently breaks GoogleCredential.FromJson at runtime (it is a reflection
+    path, so it fails as an exception rather than a build error), and even a partial trim is
+    refused because Google.Apis, Google.Api.Gax.Grpc, Newtonsoft.Json and Avalonia.DesignerSupport
+    declare trim warnings of their own. Never ship a trimmed build without loading a real
+    credential and issuing one real RPC first.
   -->
 
 </Project>
