@@ -20,9 +20,9 @@ Use GitHub's private reporting instead:
 Describe what you found, how to reproduce it, and what it could allow. Leave real keys, project or bucket
 names and private recordings out of the report; an invented example is enough.
 
-I will acknowledge a report within a week where I can, say whether I consider it a vulnerability, and tell
-you when a fix is released. I will credit you in the release notes if you wish. Please give me a reasonable
-time to fix the problem before you share it.
+This is a one person project, so I cannot promise a response time, but I aim to acknowledge a report within
+a week, say whether I consider it a vulnerability, and tell you when a fix is released. I will credit you in
+the release notes if you wish. Please give me a reasonable time to fix the problem before you share it.
 
 ## What is in scope
 

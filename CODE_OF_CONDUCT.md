@@ -25,5 +25,5 @@ In this repository: issues, pull requests and any other space the project runs.
 The maintainer may edit or remove comments, lock conversations, and block people who break these rules.
 To report a problem privately, use the
 [private report form](https://github.com/muaz978/subtitleedit-gcloud-stt-plugin/security/advisories/new)
-and say that it concerns conduct. GitHub's "Report content" option on a comment goes to GitHub, not to the
-maintainer.
+and start the title with "Conduct", so that it is read as a conduct matter. The report stays private. GitHub's
+"Report content" option on a comment goes to GitHub, not to the maintainer.
