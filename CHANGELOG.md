@@ -22,6 +22,10 @@ and the releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Test tooling updated: coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 18.10.1 and xunit.runner.visualstudio
   4.0.0. The 22 plugin tests run unchanged, and CI now fails if fewer than 20 tests are found.
 - Comments in the plugin that said it ships trimmed were corrected: the builds are not trimmed.
+- Google.Cloud.Storage.V1 updated from 4.15.0 to 5.0.0, which also raises the Google authentication libraries
+  from 1.74.0 to 1.76.0. Checked with a real recognition and a real 30 MB upload in several pieces against a
+  Cloud Storage bucket, with the same results as 4.15.0. The released plugin files are built from the earlier
+  versions; the next plugin build will carry this update.
 
 ### Fixed
 
