@@ -46,7 +46,18 @@ jobs:
       - name: Build
         run: dotnet build tests/SubtitleEdit.GoogleCloudStt.Tests -c Release --nologo
       - name: Test
-        run: dotnet test tests/SubtitleEdit.GoogleCloudStt.Tests -c Release --no-build --nologo
+        shell: bash
+        run: |
+          dotnet test tests/SubtitleEdit.GoogleCloudStt.Tests -c Release --no-build --nologo | tee "$RUNNER_TEMP/test.log"
+          python3 - "$RUNNER_TEMP/test.log" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          found = re.search(r"Total:\s+(\d+)", text)
+          total = int(found.group(1)) if found else 0
+          print("tests run:", total)
+          # A test runner that stops finding the tests still exits 0, so insist on a sensible number.
+          sys.exit(0 if total >= 20 else 1)
+          PY
 
   hygiene:
     name: Repository rules
