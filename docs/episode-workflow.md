@@ -34,15 +34,18 @@ The steps, in order:
   `gcloud auth activate-service-account`, and keep the key file out of git, chat and screenshots.
 - Optional second recognizer: Whisper large-v3 (`mlx_whisper` on Apple silicon). Used only as a
   diagnostic, see section 7.
-- The tool keeps its work files in `~/.cache/se-stt/<video name>` (responses, `report.json`, the
-  extracted audio). **That folder lives on one device and is not synced.** The saved responses are
+- The tool keeps its work files in `~/.cache/se-stt/<video name>`, where `<video name>` is the video's file
+  name with every character that is not a letter or digit replaced by `-`, cut to 60 characters
+  (`ls ~/.cache/se-stt` shows it). They are the responses, `report.json`, the
+  extracted audio. **That folder lives on one device and is not synced.** The saved responses are
   what make a rerun free. If an episode is started on one device and continued on another, copy that
   folder across, or finish on the device that started it. Otherwise the second device sends all the
   audio again and pays again.
 - Keep one folder per episode for the output subtitle, the notes, the run log and a `diag/` folder
   of scratch scripts. It is not committed.
-- Keep the scratch scripts (the ones you write for the steps of section 5) in one folder of their
-  own as well, not only inside an episode folder. An episode folder can be moved or cleared when the
+- The helper scripts for section 5 are in [tools/qc](../tools/qc/README.md). Run them in place, by their
+  path (no copy needed), and keep the episode's own files elsewhere. Keep any scratch scripts you write in one folder of their
+  own as well, not only inside an episode folder: an episode folder can be moved or cleared when the
   episode is done, and the scripts go with it.
 
 ## 3. Run it
@@ -76,7 +79,8 @@ What each flag usually means, and what we do:
 | Words at a chunk start moved by a large shift | Often correct, for example the first line after opening titles or music. Sometimes a second or two off. | Compare with a fresh re-check. Retime only if it is off by more than about half a second. |
 | The log says a chunk was truncated and its tail re-sent | The splice can hold a replay of a scene from elsewhere. | Read a fresh window on each side of the cut time, and look for one constant offset in the repeat scan. |
 | Many words moved, or a block "past the end of its chunk" | A replayed copy of earlier dialogue squeezed into a few seconds, or a displaced block. | Section 5. Delete the copy, keep the first real pass, retime the genuine lines at the join. |
-| One word moved by a small amount | Noise. | Leave it. |
+| One word moved by a second or less | Noise. | Leave it. |
+| One word moved by several seconds | Often a word whose end was discarded, a real misplacement (see [lessons.md](lessons.md#timing-and-placement-defects-the-tool-leaves)). `report.json` lists these even when the notes do not. | Check with a fresh re-read. |
 | Recovered stretch ("N words recovered") | The weakest text in the file: wrong words and wrong proper names. | Re-check first. Compare every name with its use in the rest of the episode. |
 | Short recovered words | Often noise, grunts or music vocals. | Verify there is speech. Delete if a fresh read finds nothing. |
 | Words timed inside silence | A second or so misplaced, or genuine quiet singing or humming. | Check the audio level and a fresh read before deleting anything. |
@@ -94,7 +98,8 @@ Also scan the subtitle itself for patterns the tool does not flag:
 ## 5. Check by fresh re-check
 
 A fresh request for a short span with the same model is reliable on its own, cheap (cents) and quick.
-It is the main tool for finding and fixing problems.
+It is the main tool for finding and fixing problems. The helper scripts for it (cutting spans,
+comparing, voting, retiming, patching) are in [tools/qc](../tools/qc/README.md).
 
 1. Collect the suspect spans from section 4. Add some context on each side.
 2. Cut them into pieces of 60 to 250 seconds. Start a piece in silence when you can.
@@ -265,11 +270,14 @@ Be exact about what was not checked. Do not describe a stretch as clean unless i
 
 ## 12. Gaps in the tool
 
-Nothing below is detected or repaired by the tool yet. Each would be a small, tested change built
-from observed values (see the habits at the end of [lessons.md](lessons.md)):
+Nothing below is repaired by the tool yet, and most of it is not detected either (some faults show up
+as timing events). Each would be a small, tested change built from observed values (see the habits at
+the end of [lessons.md](lessons.md)):
 
-- a built-in second full re-read with a vote and a patch helper (the steps are in section 5, the
-  scripts that did it are not in this repository yet)
+- a built-in second full re-read with a vote and a patch helper (the steps are in section 5 and the
+  helper scripts are in [tools/qc](../tools/qc/README.md), but the vote is not built into the tool)
+- five known timing and placement faults, described in [lessons.md](lessons.md#timing-and-placement-defects-the-tool-leaves)
+  (the tool reports some of them as timing events, but fixes none)
 - a replayed passage (earlier text again, with matching per-word offsets, squeezed to near zero
   duration), and telling it from a clip the show itself repeats
 - the true position of a displaced block

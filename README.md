@@ -69,6 +69,9 @@ A run writes the subtitle next to the video, a notes file that says what to chec
 A rerun that reuses the saved responses is free. A 2.5 hour episode costs about 0.5 to 0.8 US dollars,
 recovery included, and takes 15 to 40 minutes. See [Cost](#cost).
 
+To check a finished subtitle, [tools/qc](tools/qc/README.md) holds helper scripts that read an episode again in
+short pieces, compare the reads with the subtitle, vote between two reads and patch the subtitle safely.
+
 ## Two languages in one recording
 
 [tools/transcribe-broadcast.py](tools/README.md#a-programme-in-two-languages-transcribe-broadcastpy) is a second standalone

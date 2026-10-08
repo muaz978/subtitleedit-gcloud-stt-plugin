@@ -2,6 +2,7 @@
 
 This page covers `transcribe-episode.py`, for a recording in one language. For a recording where two
 languages alternate, see [A programme in two languages](#a-programme-in-two-languages-transcribe-broadcastpy).
+To check a finished subtitle by reading the audio again in short pieces, see [qc/README.md](qc/README.md).
 
 ## Prerequisites
 

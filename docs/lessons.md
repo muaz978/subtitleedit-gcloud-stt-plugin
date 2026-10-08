@@ -201,6 +201,11 @@ clean.
   safe to call the subtitle's words unsupported. So a line the subtitle has and one read hears is
   supported (a short proclamation was absent from one read and clear in the other): do not delete
   it. A line that only one read hears is not enough to insert, so flag it for a listener.
+- **Watch for:** real speech can hide in a gap shorter than the 15 second limit. About 7 seconds of
+  dialogue was missing inside one. The limit can be lowered with `SE_STT_GAP_MIN` (down to 5
+  seconds), but gaps under about 20 seconds mostly returned interjections, so try it on one
+  episode first: a rerun reuses the saved chunk responses and bills only the newly eligible recovery
+  pieces, and the billed line says what they cost.
 
 ### Replayed speech
 An earlier passage is replayed, squeezed into a few seconds, usually at the end of a chunk, and
@@ -230,12 +235,61 @@ by 100 to 300 seconds).
   Match the block's words in order against the fresh words and give every cue the start and end of
   its own words. Keep each end before the next cue outside the block, and cap each cue's length at
   what its word count allows, so one bad word end cannot stretch a cue over several seconds. A cue
-  with fewer than half of its words found goes between its matched neighbours and onto the list for
-  a listener.
+  with no word found goes between its matched neighbours, and a cue with fewer than half found keeps
+  the times of the words that were found. Both go onto the list for a listener.
 - **Watch for:** the tool's own "moved by N seconds" note can be wrong in either direction. A block
   it had moved 184 seconds later ended up 20 seconds too late, because the move was too large, and
   a block of 31 cues squeezed into 12 seconds really belonged across more than two minutes. Compare
   with a fresh re-check every time.
+
+### Timing and placement defects the tool leaves
+The tool rebuilds the word timings Google gets wrong, and five known faults remain. Three come from
+its placement rules (a garbage end, a swallowed pause, a short run with a backward-jumping end), one
+is a wrong time from Google that its resync at a chunk start does not catch, and one is a word that
+was never said. None is fixed yet, and the tool does not flag all of them (one garbage-end word and
+the 33 swallowed-pause cues of one episode had no timing event), so look for them. Each was found on
+a real episode, confirmed with a fresh re-read or a second recognizer, and corrected by hand (for the
+swallowed pause by applying the tool's own trim rule in a script).
+- **A word whose end is garbage.** Google sends a right start and a wrong end (far below the start
+  and out of order with its neighbours, or more than 5 seconds past the chunk length). Repair
+  discards the end and packs the word right before the next anchor, ignoring its good start, so a
+  sentence-final word can land several seconds from where it was said (3.6, 7.9 and 15 seconds in
+  one episode). Six of 13,048 words in that episode had such an end and five were misplaced.
+  - **Spot it:** raw words with an end far below the start, an end more than 5 seconds past the
+    chunk length, or a length over 5 seconds. Treat each timing event that moved a word by more than
+    about a second as suspect: in one episode all seven needed a fix, and `report.json` lists events the
+    notes omit.
+  - **Do:** place the word at its own start plus a typical word length, or take its time from a
+    fresh re-read.
+- **A pause swallowed into a long word.** The tool trims a word's start only when the word lasts over
+  2 seconds and starts within 10 milliseconds of the previous word's end (or has no start, or is the
+  first word of a span and starts within 2 seconds of its start), or when it lasts over 5 seconds. A
+  word containing a digit is never trimmed. A word of 2 to 5 seconds whose start is more than 10
+  milliseconds after the previous word's end is left alone even though a long pause sits at its
+  front, so its cue starts 1 to 4 seconds before the speech (33 cues in one episode).
+  - **Spot it:** raw words lasting over 2.0 and up to 5.0 seconds whose cue starts at the raw start
+    and begins with that word.
+  - **Do:** apply the same trim to any word lasting over about 2 seconds, except in sung passages. It
+    matched a second recognizer's timing of the first word to about half a second.
+- **A phrase at the start of a chunk with wrong but self-consistent times.** Up to 126 seconds too
+  early, while the rest of the same utterance is placed correctly later. It put an episode's first
+  word 97 to 117 seconds early on two episodes. Repair's resync at a chunk start did not fire: it
+  needs the later word to last over 2 seconds and to start within 10 milliseconds of the previous
+  word's end (or to have no start), and here the gaps were 0.88 and 0.04 seconds.
+  - **Spot it:** in the first dozen words of every chunk, re-cut halves included, an end offset that
+    jumps forward by 60 seconds or more.
+  - **Do:** confirm with a fresh re-read of the true position and the audio level at the early
+    position, then move the words to just before the continuation that is placed correctly.
+- **A short run of words with a backward-jumping end.** With two to four words, repair discards
+  their ends and packs the whole run before the next real line, ignoring that its starts are fine. It
+  can corrupt the text as well: the real line at that spot can be overwritten by the misplaced run.
+  Runs of five or more take a different path (a block step) and can go wrong in other ways.
+  - **Spot it:** a run whose ends were discarded and whose own start is 10 seconds or more from
+    where it was placed. Check what the cue at that spot should say against a fresh read, not only
+    the time.
+- **A word that was never said**, as the very first word of a fresh chunk.
+  - **Spot it:** a second read hears it neither at its placed time nor at its raw time.
+  - **Do:** delete it. Do not move it.
 
 ### Fake speech in music and noise
 Music, chanting and silence can produce confident but invented text, including cues in the wrong
