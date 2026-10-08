@@ -41,6 +41,9 @@ The steps, in order:
   audio again and pays again.
 - Keep one folder per episode for the output subtitle, the notes, the run log and a `diag/` folder
   of scratch scripts. It is not committed.
+- Keep the scratch scripts (the ones you write for the steps of section 5) in one folder of their
+  own as well, not only inside an episode folder. An episode folder can be moved or cleared when the
+  episode is done, and the scripts go with it.
 
 ## 3. Run it
 
@@ -113,9 +116,18 @@ try:
 finally:
     ep.cleanup()
 for s, e, _, _ in pieces:
-    words = te.words_from_raw(got[te.piece_tag(s, e)])   # [start, end, word], relative to the piece
+    r = got[te.piece_tag(s, e)]
+    if not isinstance(r, dict):   # None: the piece failed. "pending": Google has not answered it yet
+        print(s, e, "MISSING", r)
+        continue
+    words = te.words_from_raw(r)   # [start, end, word], relative to the piece
     print(s, e, " ".join(f"[{(s + w[0]) if w[0] is not None else None}]{w[2]}" for w in words))
 ```
+
+A piece that failed comes back as `None`, and one that Google has not finished as `"pending"`;
+`words_from_raw` cannot read either, so the snippet skips them and says so. Finished pieces are
+cached, so running only the missing pieces again costs nothing for the rest, and a pending piece
+resumes.
 
 4. Compare each span with the subtitle and apply three rules:
    - words in the subtitle but not in the fresh read are hallucinations: delete them
@@ -158,10 +170,12 @@ hour and about 1 US dollar more per episode), do this:
    cue text, both reads' lines around it, the show's names) and written rules: both reads must agree,
    the new wording must read better in the scene, ignore variants, take wording only from the reads,
    delete only where both reads are silent and the words are implausible, flag what cannot be
-   settled. Then three skeptics per reviewer, each with a different lens (natural language, the
-   evidence, the structure of the subtitle), try to refute every edit. Keep an edit only when at
-   least two of the three agree, and read the dissent of every split vote yourself (in the episode
-   below it was right in 6 of the 7 split votes).
+   settled; for archaic or dialect speech add the dialect rule of
+   [lessons.md](lessons.md#wording-that-differs-between-reads), or the reviewers will correct real
+   speech into modern standard forms. Then three skeptics per reviewer, each with a different lens
+   (natural language, the evidence, the structure of the subtitle), try to refute every edit. Keep
+   an edit only when at least two of the three agree, and read the dissent of every split vote
+   yourself (in the episode below it was right in 6 of the 7 split votes).
 5. **Apply** with the method of section 6, and run all the final checks of section 9 again.
 
 In one episode where the tool's checks had passed, this changed 116 of 2,624 cues (about 100 were
@@ -200,8 +214,20 @@ about 4 to 5 minutes). Its wording never goes into the subtitle. Known traps:
 
 ## 8. When a team is waiting
 
-Skip the full sweeps. Check only what the tool flagged, the biggest events first, and the slow
-chunk. This usually takes 10 to 15 minutes after the run. Say in the notes what was not checked.
+By default, skip the full sweeps (the two whole-recording reads of section 5 and the second
+recognizer of section 7). Check only what the tool flagged, the biggest events first, and
+the slow chunk. This usually takes 10 to 15 minutes after the run. Say in the notes what was not
+checked.
+
+If the wording matters too, there is a middle path of about 40 minutes after the run. It keeps the
+two whole-recording reads of section 5 (so it still costs about the extra US dollar) and drops the
+skeptic round. Do Read A and Read B and list the proposals (section 5, steps 1 to 3), repair the
+large timing defects first, then give the proposals, with the evidence and the written rules of the
+review step (including the dialect rule), to one reviewer per group of about 20, all in parallel
+(about 5 minutes). Skip the skeptic round and the second recognizer of section 7. In one episode
+this delivered the corrected subtitle about 40 minutes after the run, with three large timing
+defects repaired and 53 wording fixes. Say in the notes that there was no skeptic round and no
+second recognizer, and list the places the reads could not settle.
 
 ## 9. Final checks
 

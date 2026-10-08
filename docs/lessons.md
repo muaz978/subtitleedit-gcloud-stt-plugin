@@ -177,6 +177,12 @@ The model gets stuck and repeats a phrase dozens of times.
   contains loops but does not remove them, so review them.
 - **Watch for:** short words repeated many times at near-zero-length cues. Some are real stammers.
   Confirm against a fresh short re-check before deleting.
+- **Watch for:** the collapse keeps only two copies of any run, so it can remove repeats that are
+  really said. In one episode a re-sent tail held five calls of one word in a row, and three real
+  calls were missing from the output. The tool's notes do not say where it collapsed a loop (the
+  run log only counts them per chunk), so a fresh full read is what finds these. Where a fresh read
+  hears more repeats of a word than the subtitle has, put back the repeats that both the audio and
+  the fresh read support.
 
 ### Internal holes with no warning
 Minutes of real speech can be missing while word counts, loop counts and timing checks all look
@@ -192,7 +198,9 @@ clean.
 - **Watch for:** a fresh re-check can have a hole of its own. One piece came back with a minute of real
   speech missing, which made 80 subtitle words look invented. Before deleting, read the same stretch
   again with the pieces cut at other places. Only when two independent reads are both empty is it
-  safe to call the subtitle's words unsupported.
+  safe to call the subtitle's words unsupported. So a line the subtitle has and one read hears is
+  supported (a short proclamation was absent from one read and clear in the other): do not delete
+  it. A line that only one read hears is not enough to insert, so flag it for a listener.
 
 ### Replayed speech
 An earlier passage is replayed, squeezed into a few seconds, usually at the end of a chunk, and
@@ -219,6 +227,15 @@ A whole run of words is placed minutes away from where it was spoken (blocks of 
 by 100 to 300 seconds).
 - **Spot it:** a block whose position in a fresh re-check is far from its position in the subtitle.
 - **Do:** move the block using the re-check's own timing, not by applying a "+N seconds" correction.
+  Match the block's words in order against the fresh words and give every cue the start and end of
+  its own words. Keep each end before the next cue outside the block, and cap each cue's length at
+  what its word count allows, so one bad word end cannot stretch a cue over several seconds. A cue
+  with fewer than half of its words found goes between its matched neighbours and onto the list for
+  a listener.
+- **Watch for:** the tool's own "moved by N seconds" note can be wrong in either direction. A block
+  it had moved 184 seconds later ended up 20 seconds too late, because the move was too large, and
+  a block of 31 cues squeezed into 12 seconds really belonged across more than two minutes. Compare
+  with a fresh re-check every time.
 
 ### Fake speech in music and noise
 Music, chanting and silence can produce confident but invented text, including cues in the wrong
@@ -258,6 +275,9 @@ spellings in a single episode.
 - **Do:** if the production keeps term sheets or a character list, read them before judging a doubtful
   name. Change a name only where a fresh read supports it, and list every other place for a listener,
   because a name taken from a list alone is a guess.
+- **Watch for:** two spellings of one name can be two valid transliterations of the same person, so
+  a difference alone is not an error. Change a name only where a fresh read supports it, and list the
+  other places for a listener.
 
 ### Wording that differs between reads
 The first pass, which is one long recognition, can word a sentence worse than a short fresh read, and
@@ -273,6 +293,16 @@ two short reads can word it differently from each other.
 - **Watch for:** loud group speech, such as chanting or people talking over each other. Two
   recognizers will give different readings or none. Flag the place for a listener, and write no text
   you cannot support.
+- **Watch for:** archaic or dialect speech, as in period dramas. The first pass hears long context
+  and keeps old forms consistently (an old first person pronoun, an old conjunction, an old form of
+  address). A short fresh read hears less context and turns them into modern standard forms, and
+  both reads do it the same way, so two reads agreeing is no evidence against such a form.
+- **Do:** if the first pass uses a form consistently, treat it as speech and leave it. Change a word
+  only when it is plainly wrong (not a word, ungrammatical, contradicted by the scene) and both
+  reads give the same fitting replacement. Give this rule in writing to the reviewers of the vote
+  ([episode-workflow.md](episode-workflow.md#a-second-full-re-read-and-a-vote-when-quality-matters-more-than-speed)):
+  in one episode of this kind, 166 proposals from two agreeing reads became 53 fixes, and about 70
+  were rejected as dialect.
 
 ## Repairing
 
