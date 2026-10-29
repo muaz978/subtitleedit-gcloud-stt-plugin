@@ -16,11 +16,13 @@ and the releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Avalonia updated from 12.1.2 to 12.1.4 and `actions/setup-python` from 7.0.0 to 7.1.0 (pinned by commit). The 22
+  plugin tests pass unchanged.
 - The plugin's media tests read their sample paths from `SE_STT_SAMPLE_DIR` and
   `SE_STT_GROUND_TRUTH_WORDS`, and return early when those are not set.
 - Comments in the standalone tool about the repair step were corrected, and the README cost table was fixed.
-- Test tooling updated: coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 18.10.1 and xunit.runner.visualstudio
-  4.0.0. The 22 plugin tests run unchanged, and CI now fails if fewer than 20 tests are found.
+- Test tooling updated: coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 18.11.0 and xunit.runner.visualstudio
+  4.0.1. The 22 plugin tests run unchanged, and CI now fails if fewer than 20 tests are found.
 - Comments in the plugin that said it ships trimmed were corrected: the builds are not trimmed.
 - Google.Cloud.Storage.V1 updated from 4.15.0 to 5.0.0, which also raises the Google authentication libraries
   from 1.74.0 to 1.76.0. Checked with a real recognition and a real 30 MB upload in several pieces against a
