@@ -867,6 +867,7 @@ class PieceStub:
     """cut, upload and submit for an Episode, recording calls; submit writes the operation record."""
     def __init__(self, ep, clock=None):
         self.ep, self.calls = ep, {"cut": 0, "upload": 0, "submit": 0}
+        self.hedges = []     # (tag, region, strategy, name) of every second attempt
         ep.deploy = lambda: ("p", "b", "gcloud")
         ep.cut, ep.upload, ep.submit = self.cut, self.upload, self.submit
         self.clock = clock
@@ -879,14 +880,22 @@ class PieceStub:
         self.calls["upload"] += 1
         self.ep.uploaded = True
         return "uri-" + tag
-    def submit(self, folder, tag, s, e, uri, attempts=1):
+    def submit(self, folder, tag, s, e, uri, attempts=1, region=None, strategy=None, hedge_of=None):
         self.calls["submit"] += 1
         path = f"{folder}/{tag}.op.json"
-        te.atomic_write(path, json.dumps({"name": f"op-new-{self.calls['submit']}", "start_ms": te.ms(s), "end_ms": te.ms(e),
+        name = f"op-new-{self.calls['submit']}"
+        if hedge_of:
+            self.hedges.append((tag, region, strategy, name))
+            with open(path) as fh:
+                rec = json.load(fh)
+            rec["hedges"] = rec.get("hedges", []) + [name]
+            te.atomic_write(path, json.dumps(rec))
+            return name
+        te.atomic_write(path, json.dumps({"name": name, "start_ms": te.ms(s), "end_ms": te.ms(e),
                                           "submitted": self.clock.time() if self.clock else time.time(),
-                                          "prefix": self.ep.prefix, "attempts": attempts}))
+                                          "prefix": self.ep.prefix, "attempts": attempts, "uri": uri}))
         self.ep.pending.add(path)
-        return f"op-new-{self.calls['submit']}"
+        return name
 
 
 class NotesKeepStretchesApart(unittest.TestCase):
@@ -2014,8 +2023,10 @@ class Stragglers(TempWorkMixin, unittest.TestCase):
     waiting operation reads must not stay in the bucket."""
     STRAGGLER = (2627.0, 2672.0, 2629.0, 2670.0)
 
-    def run_pieces(self, extra_record=None):
+    def run_pieces(self, extra_record=None, hedging=False):
         ep, clock = self.episode(), FakeClock()
+        if not hedging:
+            ep.fallback = None      # the straggler wait is tested on its own; hedging has its own tests
         ep.deploy = lambda: ("p", "b", "gcloud")
         ep.cut = lambda s, e, p: (open(p, "w").close(), p)[1]
         ep.sh = lambda *a: subprocess.CompletedProcess(a, 0, "", "")        # the real upload(), gcloud answering
@@ -2062,6 +2073,125 @@ class Stragglers(TempWorkMixin, unittest.TestCase):
         ep, got, waited, removed = self.run_pieces(extra_record={"name": "op-x", "start_ms": 1, "end_ms": 2})
         self.assertEqual([a for a in removed if a[1:3] == ["storage", "rm"]], [])
         self.assertEqual(te.read_json(f"{self.tmp}/uploads.json"), [ep.prefix])
+
+
+class HedgedAttempts(TempWorkMixin, unittest.TestCase):
+    """2026-10-31: about 30% of jobs sat 1.5 to 3 hours in both processing strategies while the rest
+    answered in a minute or two. A slow piece gets a second attempt, immediate, in the other region."""
+    PIECE = (100.0, 245.0, 102.0, 243.0)
+
+    def harness(self, answers):
+        """answers(name, posted_at, region, strategy, now) -> response or None; every POST is recorded."""
+        ep, clock = self.episode(), FakeClock()
+        ep.deploy = lambda: ("p", "b", "gcloud")
+        ep.cut = lambda s, e, p: (open(p, "w").close(), p)[1]
+        ep.sh = lambda *a: subprocess.CompletedProcess(a, 0, "", "")
+        posts, cancels, polled = {}, [], []
+        def api(method, url, body=None, **kw):
+            region = re.search(r"//([a-z0-9]+)-speech", url).group(1)
+            if method == "POST" and url.endswith(":cancel"):
+                cancels.append(url.rsplit("/", 1)[1][:-len(":cancel")])
+                return {}
+            if method == "POST":
+                name = f"projects/p/locations/{region}/operations/op{len(posts) + 1}"
+                posts[name] = (clock.time(), region, body["processingStrategy"])
+                return {"name": name}
+            name = url.split("/v2/", 1)[1]
+            polled.append((region, name))
+            at, reg, strat = posts[name]
+            return answers(name, at, reg, strat, clock.time()) or {}
+        ep.api = api
+        ep.run_proc = lambda args: subprocess.CompletedProcess(args, 0, "", "")
+        return ep, clock, posts, cancels, polled
+
+    def fetch(self, ep, clock):
+        with mock.patch.object(te.time, "sleep", clock.sleep), mock.patch.object(te.time, "time", clock.time), \
+                mock.patch.object(te, "log") as logged:
+            start = clock.time()
+            got = ep.fetch_pieces([self.PIECE])
+        return got, clock.time() - start, " ".join(str(c.args[0]) for c in logged.call_args_list)
+
+    def test_a_stuck_first_attempt_is_answered_by_a_second_attempt_in_the_other_region(self):
+        def answers(name, at, region, strat, now):
+            if region == "eu" and now - at >= 10:
+                return response([(1.0, 1.4, "bir")], billed="145s")
+            return None
+        ep, clock, posts, cancels, polled = self.harness(answers)
+        ep.region, ep.fallback = "us", "eu"
+        got, waited, logged = self.fetch(ep, clock)
+        tag = te.piece_tag(*self.PIECE[:2])
+        self.assertIsInstance(got[tag], dict)
+        self.assertLess(waited, 180)
+        first, second = list(posts.values())
+        self.assertEqual((first[1], first[2]), ("us", "DYNAMIC_BATCHING"))
+        self.assertEqual((second[1], second[2]), ("eu", "PROCESSING_STRATEGY_UNSPECIFIED"))
+        self.assertEqual(cancels, [list(posts)[0].rsplit("/", 1)[1]])     # the loser is cancelled
+        self.assertIn(("eu", list(posts)[1]), polled)                       # asked at the region it runs in
+        self.assertEqual(ep.hedged, 1)
+        self.assertIn("second attempt in the eu region", logged)
+
+    def test_the_second_hedge_goes_back_to_the_own_region_and_there_are_no_more_than_two(self):
+        ep, clock, posts, cancels, polled = self.harness(lambda *a: None)
+        ep.region, ep.fallback = "us", "eu"
+        got, waited, _ = self.fetch(ep, clock)
+        self.assertEqual(got[te.piece_tag(*self.PIECE[:2])], "pending")
+        self.assertEqual([(r, s) for _, r, s in posts.values()],
+                         [("us", "DYNAMIC_BATCHING"), ("eu", "PROCESSING_STRATEGY_UNSPECIFIED"), ("us", "PROCESSING_STRATEGY_UNSPECIFIED")])
+
+    def test_a_piece_that_answers_in_time_costs_no_second_attempt(self):
+        ep, clock, posts, cancels, _ = self.harness(lambda name, at, *a: response([(1.0, 1.4, "bir")]) if a[-1] - at >= 20 else None)
+        got, _, _ = self.fetch(ep, clock)
+        self.assertIsInstance(got[te.piece_tag(*self.PIECE[:2])], dict)
+        self.assertEqual((len(posts), cancels, ep.hedged), (1, [], 0))
+
+    def test_failed_first_attempt_hands_over_to_the_hedge_not_to_a_failure(self):
+        def answers(name, at, region, strat, now):
+            if region == "us":
+                st = response([]); st["error"] = {"message": "An internal error occurred."}; return st if now - at > 200 else None
+            return response([(1.0, 1.4, "bir")]) if now - at >= 10 else None
+        ep, clock, posts, cancels, _ = self.harness(answers)
+        ep.region, ep.fallback = "us", "eu"
+        got, _, _ = self.fetch(ep, clock)
+        self.assertIsInstance(got[te.piece_tag(*self.PIECE[:2])], dict)
+
+    def test_fallback_none_turns_hedging_off(self):
+        ep, clock, posts, _, _ = self.harness(lambda *a: None)
+        ep.fallback = None
+        got, waited, _ = self.fetch(ep, clock)
+        self.assertEqual(len(posts), 1)
+
+    def test_a_region_that_refuses_the_job_turns_hedging_off_for_the_run(self):
+        ep2, clock2, posts2, _, _ = self.harness(lambda *a: None)
+        ep2.region, ep2.fallback = "us", "eu"
+        real = ep2.api
+        def api(method, url, body=None, **kw):
+            if method == "POST" and "//eu-speech" in url:
+                raise te.RequestFailed("POST request failed with HTTP 400: model not available", 400)
+            return real(method, url, body, **kw)
+        ep2.api = api
+        self.fetch(ep2, clock2)
+        self.assertTrue(ep2.hedge_off)
+
+    def test_a_refused_cancel_is_asked_once_and_never_stops_the_run(self):
+        ep, clock, posts, cancels, _ = self.harness(lambda *a: None)
+        asked = []
+        def api(method, url, body=None, **kw):
+            asked.append(url)
+            raise te.RequestFailed("POST request failed with HTTP 403: Permission 'speech.operations.cancel' denied", 403)
+        ep.api = api
+        ep.cancel(["projects/p/locations/us/operations/a", "projects/p/locations/us/operations/b"])
+        ep.cancel(["projects/p/locations/us/operations/c"])
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(ep.cancel_off)
+
+    def test_op_host_and_billing_rate_follow_what_ran(self):
+        self.assertEqual(te.op_host("projects/p/locations/eu/operations/o1", "us-speech.googleapis.com"), "eu-speech.googleapis.com")
+        self.assertEqual(te.op_host("op-old", "us-speech.googleapis.com"), "us-speech.googleapis.com")
+        self.assertEqual(te.RATE_PER_MIN.get("DYNAMIC_BATCHING", te.RATE_STANDARD), 0.003)
+        self.assertEqual(te.RATE_PER_MIN.get("PROCESSING_STRATEGY_UNSPECIFIED", te.RATE_STANDARD), 0.016)
+        self.assertEqual(te.hedge_limit([]), te.HEDGE_MIN)
+        self.assertEqual(te.hedge_limit([100, 100, 100]), te.HEDGE_MAX)       # 4 x 100 s, capped
+        self.assertEqual(te.hedge_limit([10, 12, 11]), te.HEDGE_MIN)          # fast days hedge at the floor
 
 
 class LeftoverRecords(TempWorkMixin, unittest.TestCase):
@@ -2275,6 +2405,39 @@ class StallGivesUpAndRecuts(TempWorkMixin, unittest.TestCase):
         self.assertGreater(clock.time() - FakeClock().time(), te.STALL_GIVE_UP_AFTER)
         # give up drops the op record: a later run must submit fresh, not resume a stale one.
         self.assertFalse(os.path.exists(f"{ep.raw}/part-034.op.json"))
+
+    def test_a_stuck_chunk_is_rescued_by_a_second_attempt_before_the_give_up_time(self):
+        """2026-10-31: first-pass chunks sat unanswered while the same audio sent again answered in
+        about two minutes. The second attempt starts at HEDGE_CHUNK_AFTER[0], not after the give-up."""
+        ep = self.episode()
+        stub = PieceStub(ep)
+        ep.region, ep.fallback = "us", "eu"
+        clock = FakeClock()
+        cancelled = []
+        ep.cancel = lambda names: cancelled.extend(names)
+        def poll(name, **kw):
+            if name == "op-new-2" and clock.time() - hedged_at[0] >= 20:
+                return response([(0.5, 1.0, "bir")])
+            return None
+        hedged_at = [None]
+        real_submit = ep.submit
+        def submit(*a, **kw):
+            name = real_submit(*a, **kw)
+            if kw.get("hedge_of"):
+                hedged_at[0] = clock.time()
+            return name
+        ep.submit = submit
+        ep.poll = poll
+        ep.save_response = lambda folder, tag, s, e, st: None
+        with mock.patch.object(te, "time", clock), mock.patch.object(te, "log"):
+            t0 = clock.time()
+            st = ep.recognize(0.0, 1080.0, "part-001")
+            waited = clock.time() - t0
+        self.assertIsNotNone(st)
+        self.assertLess(waited, te.STALL_GIVE_UP_AFTER)
+        self.assertGreaterEqual(waited, te.HEDGE_CHUNK_AFTER[0])
+        self.assertEqual([h[1:3] for h in stub.hedges], [("eu", "PROCESSING_STRATEGY_UNSPECIFIED")])
+        self.assertEqual(cancelled, ["op-new-1"])
 
     def test_a_resumed_operation_already_past_the_threshold_gives_up_almost_at_once(self):
         """The clock counts from the ORIGINAL submission, not from this process's own start - a

@@ -377,6 +377,24 @@ class RobustnessTests(Base):
         self.assertEqual(out["100-150"][1], [101.0, None, "beta"])         # a missing end stays missing
         self.assertFalse(os.path.exists(self.path("out.json.missing.json")))   # nothing stale is left behind
 
+    def test_recheck_takes_both_reads_in_one_call_and_each_keeps_its_own_missing_list(self):
+        """Two reads sent one after the other each waited out Google's stalls in turn (2026-10-31)."""
+        tool = self.write("fake_tool.py", FAKE_TOOL)
+        work = os.path.join(self.dir.name, "work")
+        os.mkdir(work)
+        self.write(os.path.join("work", "full.flac"), "")
+        a = self.write_json("spans_a.json", [[0, 50], [100, 150]])
+        b = self.write_json("spans_b.json", [[0, 40], [200, 250]])
+        p = run("recheck.py", work, a, self.path("a.json"), b, self.path("b.json"), expect=2, env={"SE_STT_TOOL": tool})
+        self.assertEqual(list(json.loads(self.read("a.json"))), ["0-50"])
+        self.assertEqual(list(json.loads(self.read("b.json"))), ["0-40"])
+        self.assertEqual(json.loads(self.read("a.json.missing.json")), [[100.0, 150.0]])
+        self.assertEqual(json.loads(self.read("b.json.missing.json")), [[200.0, 250.0]])
+        run("recheck.py", work, a, self.path("a.json"), b, self.path("b.json"), env={"SE_STT_TOOL": tool, "FAKE_OK": "1"})
+        self.assertFalse(os.path.exists(self.path("a.json.missing.json")))
+        self.assertFalse(os.path.exists(self.path("b.json.missing.json")))
+        run("recheck.py", work, a, expect=1, env={"SE_STT_TOOL": tool})       # a spans file without its output file
+
     def test_turkish_text_survives_a_console_that_is_not_utf8(self):
         env = {"LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
         cues = [(i * 3.0, i * 3.0 + 2.7, " ".join(TR[(i * 3 + k) % len(TR)] for k in range(3))) for i in range(10)]

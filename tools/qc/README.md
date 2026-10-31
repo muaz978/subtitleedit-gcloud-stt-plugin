@@ -31,7 +31,7 @@ a script with no arguments prints its usage.
 |:--|:--|
 | `cues.py` | Structure and pattern scan of a subtitle (inverted or overlapping cues, cues under 0.3 s, stray scripts, runs of the same short phrase (up to three words) in four or more cues, long gaps, repeated six-word sequences). `show A B` prints cues A to B, `at T0 T1` prints the cues in a time range |
 | `make_spans.py` | Cuts the episode into pieces of about 150 s at the widest gaps of the subtitle itself. Mode A starts at 0, mode B shifts every cut by 75 s and keeps it at least 30 s from a cut of A |
-| `recheck.py` | Sends the pieces to the model through the episode tool's own `fetch_pieces` and writes the fresh words with absolute times |
+| `recheck.py` | Sends the pieces to the model through the episode tool's own `fetch_pieces` and writes the fresh words with absolute times. Give it every read in one call (`WORK spans_a.json fresh_a.json spans_b.json fresh_b.json`) so they are waited for together; slow pieces get a second attempt in the other region, and it stops with exit code 2 and a missing list after `SE_STT_READ_DEADLINE` seconds (default 2400) |
 | `compare.py` | Per piece: how well the subtitle agrees with a fresh read, and the differences ("srt only", "fresh only", "swap") |
 | `displace.py` | Cues whose words sit at another time than in a fresh read, with the distance from the piece edge (an edge hit is usually an artifact) |
 | `fview.py` | A time range as spoken lines from every fresh piece, next to the subtitle's cues |

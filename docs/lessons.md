@@ -149,9 +149,35 @@ If you run long or difficult audio, prefer the Python tool: it carries the guard
 - Waiting more than a few minutes on an operation that has not moved. Some operations never answer at
   all. In testing the same span stalled again on resubmission, while smaller re-cut halves finished
   in seconds.
-- Resending an operation that may already have started. Once the request is out, Google may be
-  running it, and a second submission is billed too. Resend only when the request cannot have
-  arrived (name did not resolve, connection refused) or on a rate-limit or server error.
+- Resending an operation that may already have started **in place of** the first. Once the request is
+  out, Google may be running it, and a second submission is billed too. Resend only when the request
+  cannot have arrived (name did not resolve, connection refused) or on a rate-limit or server error.
+  The exception is a deliberate second attempt **beside** the first, see the next section.
+
+## Slow Google days
+
+Measured from Google's own operation list (list the operations of the region and compare each one's
+create and update time), one day had about 30% of all jobs sitting 1.5 to 3 hours, in dynamic batching
+and in immediate mode alike, while the rest answered in one to two minutes. The jobs were either quick
+or stuck, nothing in between. On the ordinary days before it (about 2,200 jobs) the median was 7 to 31
+seconds, at most 4% took over 10 minutes and none took over 30. A stuck job was released hours later;
+resending the same job sooner usually answered in a minute or two.
+
+- Immediate mode is not the cure for a stall. It changes price (about five times) and queueing, not the
+  recognition, and it stalled as often as dynamic batching on that day.
+- Start a second attempt beside any job that is slower than a few times the usual answer time: immediate
+  processing, first in the other region, then again in the first. Take whichever answers first and ask Google to stop
+  the rest. The tool does this on its own (SE_STT_FALLBACK_REGION names the other region, "none" turns it
+  off). It costs one more recognition of the pieces that were already slow, and nothing on a good day.
+  Stopping the losing attempts needs the speech.operations.cancel permission on the account; without it
+  the tool asks once, gets a refusal, and the losing attempts finish and are billed as well.
+- Send all the fresh re-reads in one call. Two reads started one after the other each waited out the same
+  stall in turn.
+- A run that cannot finish does not deliver a partial subtitle by itself. It stops, says which pieces are
+  missing, and the person decides.
+- The cost line printed at the end uses the rate of the processing strategy that ran. Before this it
+  always printed the dynamic batching rate, so an immediate run looked five times cheaper than it was.
+- When a run is slow, look at the operation list before explaining it. A guess about a queue was wrong once.
 
 ## What can come back wrong, and how to recognise it
 
@@ -423,7 +449,8 @@ Finish with these checks:
 ## Cost and time
 
 - Dynamic batching is about $0.003 per minute against $0.016 per minute for standard, roughly 81%
-  cheaper, in exchange for slower turnaround. Leave it on by default.
+  cheaper, in exchange for slower turnaround on a busy queue. Leave it on by default. Slow pieces get
+  an immediate second attempt on their own, so the default no longer needs changing on a slow day.
 - Expect about 8 times real time end to end.
 - Billed audio is usually 7 to 50% more than the recording's length, because recovery pieces and
   re-cuts are billed too. Music-heavy material costs the most.

@@ -46,6 +46,18 @@ STALL_WARN_AFTER = 3 * 60.0     # an operation Google has held this long with no
 # the queue once reported chunks that had not been sent yet as "pending with Google".
 STALL_GIVE_UP_AFTER = 5 * 60.0
 STALL_RECUT_FLOOR = 45.0
+# A measured incident (2026-10-31): about 30% of all jobs sat 1.5 to 3 hours, in dynamic batching and
+# in immediate mode alike, while the rest answered in one to two minutes. Waiting does not help and
+# neither does a different processing strategy, so a job that is slow gets a second, independent
+# attempt (a hedge) beside it instead of replacing it: immediate processing, first in the other
+# region, then again in the first. Whichever answers first wins and the others are cancelled. A hedge
+# costs one more recognition of that piece, so it only happens to pieces that are already slow.
+HEDGE_MIN, HEDGE_MAX, HEDGE_FACTOR = 120.0, 240.0, 4.0   # seconds a piece waits before a hedge; 4x the median answer, within these
+HEDGE_CHUNK_AFTER = (150.0, 240.0)   # an 18 minute chunk answers in 111-137 s when healthy; seconds before its first and second hedge
+MAX_HEDGES = 2
+HEDGE_STRATEGY = "PROCESSING_STRATEGY_UNSPECIFIED"
+RATE_PER_MIN = {"DYNAMIC_BATCHING": 0.003}   # any other strategy is billed at the standard rate
+RATE_STANDARD = 0.016
 
 def log(m):
     line = f"[{time.strftime('%H:%M:%S')}] {m}"
@@ -251,6 +263,18 @@ def words_from_raw(st):
                     out.append([sec(w["startOffset"]) if "startOffset" in w else None,
                                 sec(w["endOffset"]) if "endOffset" in w else None, w.get("word","")])
     return out
+
+def hedge_limit(answered_in):
+    """Seconds a piece may be with Google before a second attempt starts: four times the median answer
+    time of the pieces that did answer, within HEDGE_MIN and HEDGE_MAX."""
+    if len(answered_in) >= 3:
+        return min(HEDGE_MAX, max(HEDGE_MIN, HEDGE_FACTOR * statistics.median(answered_in)))
+    return HEDGE_MIN
+
+def op_host(name, default):
+    """The host an operation has to be asked at: its name says which region it runs in."""
+    m = re.search(r"/locations/([a-z0-9-]+)/operations/", name or "")
+    return f"{m.group(1)}-speech.googleapis.com" if m else default
 
 def billed_seconds(st):
     """Audio Google billed for one response, or None when the response does not say."""
@@ -1643,6 +1667,12 @@ class Episode:
         # silently overwriting each other's audio.
         self.prefix = f"stt/{int(time.time())}-{os.getpid()}/"
         self.host = f"{self.region}-speech.googleapis.com"
+        # The second region a slow job is hedged in. "none" turns hedging off.
+        fb = os.environ.get("SE_STT_FALLBACK_REGION", "").strip().lower()
+        self.fallback = None if fb == "none" else (fb or ("eu" if self.region == "us" else "us"))
+        self.hedge_off = False      # set once the fallback region refuses a job, so it is not asked again
+        self.hedged = 0             # hedge attempts submitted by this run
+        self.cancel_off = False     # set once Google refuses cancelling (the account lacks the permission)
         self.env = dict(os.environ, CLOUDSDK_STORAGE_PARALLEL_COMPOSITE_UPLOAD_ENABLED="False")
         self.ffmpeg = self.ffprobe = self.full = None
         self.video_bytes = None
@@ -1812,19 +1842,29 @@ class Episode:
         self.sh(gcloud, "storage", "cp", "-q", *self.account, local, uri)
         return uri
 
-    def submit(self, folder, tag, start, end, uri, attempts=1):
+    def submit(self, folder, tag, start, end, uri, attempts=1, region=None, strategy=None, hedge_of=None):
+        """Starts one recognition. region and strategy default to the run's own; hedge_of is the
+        operation record of the piece this is a second attempt for, which then lists the new name."""
         project = self.deploy()[0]
+        region = region or self.region
         # As of 2026-09: the denoiser made no difference, speech adaptation together with word
         # offsets returned an internal error, and a custom prompt mis-timed words.
         # Re-test if the model changes.
         body = {"config":{"autoDecodingConfig":{},"languageCodes":[self.lang],"model":self.model,
                 "features":{"enableWordTimeOffsets":True,"enableAutomaticPunctuation":True}},
                 "files":[{"uri":uri}],"recognitionOutputConfig":{"inlineResponseConfig":{}},
-                "processingStrategy":self.strategy}
-        name = self.api("POST", f"https://{self.host}/v2/projects/{project}/locations/{self.region}/recognizers/_:batchRecognize", body)["name"]
+                "processingStrategy":strategy or self.strategy}
+        name = self.api("POST", f"https://{region}-speech.googleapis.com/v2/projects/{project}/locations/{region}/recognizers/_:batchRecognize", body)["name"]
+        path = f"{folder}/{tag}.op.json"
+        if hedge_of:
+            # a second attempt beside the first: only the record gains a name, the piece keeps its clock
+            rec = read_json(path, {})
+            if isinstance(rec, dict) and rec.get("name"):
+                rec["hedges"] = list(rec.get("hedges", [])) + [name]
+                atomic_write(path, json.dumps(rec))
+            return name
         # Written right after submitting, so a crash or Ctrl+C resumes this operation instead of
         # paying for the same audio again. The prefix and uri say which uploaded audio it still needs.
-        path = f"{folder}/{tag}.op.json"
         atomic_write(path, json.dumps({"name": name, "start_ms": ms(start), "end_ms": ms(end), "submitted": time.time(),
                                        "prefix": self.prefix, "uri": uri, "attempts": attempts}))
         self.pending.add(path)
@@ -1832,8 +1872,41 @@ class Episode:
 
     def poll(self, name, attempts=5, timeout=120):
         """The finished operation, or None while it is still running."""
-        st = self.api("GET", f"https://{self.host}/v2/{name}", attempts=attempts, timeout=timeout)
+        st = self.api("GET", f"https://{op_host(name, self.host)}/v2/{name}", attempts=attempts, timeout=timeout)
         return st if st.get("done") else None
+
+    def cancel(self, names):
+        """Best effort: tells Google to stop operations whose answer is no longer needed. The account
+        needs the speech.operations.cancel permission for it; without it (HTTP 403) the losing
+        attempts simply finish, are billed like any other, and nothing is asked again this run."""
+        for name in names:
+            if self.cancel_off:
+                return
+            try:
+                self.api("POST", f"https://{op_host(name, self.host)}/v2/{name}:cancel", {}, attempts=1, timeout=20)
+            except (Exception, SystemExit) as ex:
+                if isinstance(ex, RequestFailed) and ex.status == 403:
+                    self.cancel_off = True
+
+    def can_hedge(self, uri):
+        return bool(uri) and self.fallback and not self.hedge_off
+
+    def hedge(self, folder, tag, start, end, uri, count):
+        """A second, independent attempt for a slow piece: immediate processing, in the other region
+        first and in the run's own region the second time. Returns the new operation name, or None
+        when it could not be started (a refusing fallback region turns hedging off for the run)."""
+        region = self.fallback if count == 0 else self.region
+        try:
+            name = self.submit(folder, tag, start, end, uri, region=region, strategy=HEDGE_STRATEGY, hedge_of=True)
+        except (Exception, SystemExit) as ex:
+            if region == self.fallback and not (isinstance(ex, RequestFailed) and (ex.status is None or ex.status in RETRY_STATUS)):
+                self.hedge_off = True
+            log(f"WARNING: could not start a second attempt for {tag}: {redact(ex)}")
+            return None
+        with self._lock:
+            self.hedged += 1
+        log(f"  {tag}: slow, started a second attempt in the {region} region")
+        return name
 
     def drop_op(self, path):
         self.pending.discard(path)
@@ -1857,7 +1930,9 @@ class Episode:
             self.drop_op(path)
             return None
         self.pending.add(path)
-        return {"name": op["name"], "submitted": float(op["submitted"]), "attempts": attempts}
+        hedges = [h for h in op.get("hedges", []) if isinstance(h, str) and h]
+        return {"name": op["name"], "submitted": float(op["submitted"]), "attempts": attempts,
+                "hedges": hedges, "uri": op.get("uri") if isinstance(op.get("uri"), str) else None}
 
     def cached(self, folder, tag, start, end):
         """A saved response for exactly this span, checked BEFORE anything is cut or uploaded."""
@@ -1918,6 +1993,7 @@ class Episode:
         op = self.resumable(folder, tag, start, end)
         name, resumed = (op["name"], True) if op else (None, False)
         started = float(op["submitted"]) if op else None
+        hedges, uri = (list(op["hedges"]), op["uri"]) if op else ([], None)
         warned = False
         if resumed:
             log(f"  {tag}: resuming the operation an interrupted run left")
@@ -1926,7 +2002,9 @@ class Episode:
                 local = self.cut(start, end, f"{self.work}/{tag}.flac")
                 self.deploy()
                 self.claim_prefix()
-                name = self.submit(folder, tag, start, end, self.upload(local, tag))
+                uri = self.upload(local, tag)
+                name = self.submit(folder, tag, start, end, uri)
+                hedges = []
                 if started is None:
                     started = time.time()
             time.sleep(CHUNK_POLL)
@@ -1937,12 +2015,17 @@ class Episode:
                 raise Stopped(_STOP_CODE[0])
             held = time.time() - started
             if held > STALL_GIVE_UP_AFTER:
+                self.cancel([name] + hedges)
                 self.drop_op(f"{folder}/{tag}.op.json")
                 raise Stalled(start, end, tag)
             if held > STALL_WARN_AFTER and not warned:
                 warned = True
                 log(f"WARNING: {tag} has been with Google {held/60:.0f} min with no result, unusually slow "
                     f"(still waiting; gives up and re-cuts after {STALL_GIVE_UP_AFTER/60:.0f} min)")
+            if len(hedges) < len(HEDGE_CHUNK_AFTER) and self.can_hedge(uri) and held > HEDGE_CHUNK_AFTER[len(hedges)]:
+                second = self.hedge(folder, tag, start, end, uri, len(hedges))
+                if second:
+                    hedges.append(second)
             try:
                 st = self.poll(name)
             except RequestFailed as e:
@@ -1955,9 +2038,29 @@ class Episode:
                 log(f"  {tag}: Google no longer has the interrupted operation (HTTP {e.status}), submitting again")
                 name, resumed = None, False
                 continue
+            if st is None and hedges:
+                for h in list(hedges):
+                    try:
+                        hs = self.poll(h)
+                    except (Exception, SystemExit):
+                        continue
+                    if hs is None:
+                        continue
+                    if response_error(hs):
+                        hedges.remove(h)
+                        continue
+                    self.cancel([name] + [x for x in hedges if x != h])
+                    st, hedges = hs, []
+                    break
+            elif st is not None and hedges and not response_error(st):
+                self.cancel(hedges)
+                hedges = []
             if st is None:
                 continue
             problem = response_error(st)
+            if problem and hedges:
+                name = hedges.pop(0)       # the first attempt failed: a second one is still running
+                continue
             if problem:
                 self.drop_op(f"{folder}/{tag}.op.json")
                 if resumed:
@@ -1999,10 +2102,12 @@ class Episode:
         stage_end = started + REC_TIMEOUT
         span = {tag: (s, e) for tag, s, e in todo}
         ops, until, tries, fresh = {}, {}, {}, []
+        hedges, uri_of, first_sent = {}, {}, {}   # second attempts per piece, its uploaded audio, when it first reached Google
         for tag, s, e in todo:
             op = self.resumable(folder, tag, s, e)
             if op:
                 ops[tag], tries[tag] = op["name"], op["attempts"]
+                hedges[tag], uri_of[tag], first_sent[tag] = list(op["hedges"]), op["uri"], op["submitted"]
                 until[tag] = started + max(REC_RESUME_WAIT, REC_TIMEOUT - max(0.0, started - op["submitted"]))
             else:
                 fresh.append(tag)
@@ -2046,7 +2151,8 @@ class Episode:
             try:
                 ops[tag] = self.submit(folder, tag, s, e, uris[tag])
                 tries[tag], until[tag], unreachable = 1, stage_end, 0
-                sent_at[tag] = time.time()
+                sent_at[tag] = first_sent[tag] = time.time()
+                uri_of[tag] = uris[tag]
             except (Exception, SystemExit) as ex:
                 if isinstance(ex, RequestFailed) and (ex.status is None or ex.status in RETRY_STATUS):
                     unreachable += 1
@@ -2073,8 +2179,38 @@ class Episode:
                             break         # a stalled connection costs each request its whole timeout
                         continue          # network or server trouble: the next round asks again
                     st, problem = None, f"its status could not be read ({redact(ex)})"
+                live = hedges.get(tag, [])
+                if st is not None and problem is None:
+                    self.cancel(live)
+                elif live:
+                    # the first attempt is slow or failed: a second attempt may have answered
+                    for h in list(live):
+                        try:
+                            hs = self.poll(h, attempts=1, timeout=max(5.0, min(REC_POLL_TIMEOUT, left)))
+                        except (Exception, SystemExit):
+                            continue
+                        if hs is None:
+                            continue
+                        if response_error(hs):
+                            live.remove(h)
+                            continue
+                        self.cancel([ops[tag]] + [x for x in live if x != h])
+                        st, problem = hs, None
+                        break
+                    else:
+                        if problem and live:
+                            ops[tag] = live.pop(0)     # the first attempt failed: the next one carries on
+                            st = problem = None
                 if st is None and problem is None:
+                    fire = len(live)
+                    limit = hedge_limit(answered_in)
+                    if (fire < MAX_HEDGES and self.can_hedge(uri_of.get(tag))
+                            and time.time() - first_sent.get(tag, started) > limit * (1 + fire)):
+                        name2 = self.hedge(folder, tag, s, e, uri_of[tag], fire)
+                        if name2:
+                            hedges.setdefault(tag, []).append(name2)
                     continue
+                hedges.pop(tag, None)
                 del ops[tag]
                 if tag in sent_at:
                     answered_in.append(time.time() - sent_at.pop(tag))
@@ -2102,7 +2238,7 @@ class Episode:
                 except (Exception, SystemExit) as ex:
                     ops.pop(tag, None)
                     log(f"WARNING: could not submit recovery piece {clock(s)}-{clock(e)} again: {redact(ex)}")
-            slow = [tag for tag in ops if tag in sent_at]
+            slow = [tag for tag in ops if tag in sent_at and (not self.can_hedge(uri_of.get(tag)) or len(hedges.get(tag, [])) >= MAX_HEDGES)]
             if slow and len(answered_in) >= 3 and len(slow) <= max(1, (len(slow) + len(answered_in)) // 10):
                 cap = time.time() + max(REC_RESUME_WAIT, STRAGGLER_FACTOR * statistics.median(answered_in))
                 if any(until[tag] > cap for tag in slow):
@@ -2540,7 +2676,9 @@ class Episode:
         # Operations still running are billed when they finish, so "nothing billed" must not hide them.
         waiting = f"{len(self.pending)} operation(s) still pending, billed when they finish" if self.pending else ""
         if self.fetched:
-            log(f"billed {self.billed:.0f} s (about ${self.billed/60*0.003:.2f})" + (f"; {waiting}" if waiting else ""))
+            log(f"billed {self.billed:.0f} s (about ${self.billed/60*RATE_PER_MIN.get(self.strategy, RATE_STANDARD):.2f}, "
+                f"{'dynamic batching' if self.strategy == 'DYNAMIC_BATCHING' else 'standard rate'}" +
+                (f", {self.hedged} second attempt(s)" if self.hedged else "") + ")" + (f"; {waiting}" if waiting else ""))
         elif waiting:
             log(f"nothing billed yet; {waiting}")
         else:

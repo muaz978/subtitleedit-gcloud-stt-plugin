@@ -103,7 +103,20 @@ comparing, voting, retiming, patching) are in [tools/qc](../tools/qc/README.md).
 
 1. Collect the suspect spans from section 4. Add some context on each side.
 2. Cut them into pieces of 60 to 250 seconds. Start a piece in silence when you can.
-3. Send all the pieces in one call. They run concurrently, usually in two to three minutes.
+3. Send all the pieces in one call. They run concurrently, usually in two to three minutes. A piece
+   Google is slow with gets a second attempt in the other region on its own (docs/lessons.md, slow
+   Google days). For the whole-recording reads, give Read A and Read B to one call of
+   `tools/qc/recheck.py WORKDIR spans_a.json fresh_a.json spans_b.json fresh_b.json`: it sends both,
+   waits for both together and keeps going until every piece is back or `SE_STT_READ_DEADLINE`
+   seconds (default 2400) have passed. If it stops with pieces missing, do not deliver a partial
+   subtitle: tell the person which pieces are missing and why, and let them choose.
+
+**Order of work.** Do what a person cannot fix by ear first. Structural problems need both reads: a
+stretch with no words, a block of cues placed far from where it is spoken, a replay, cues too short to
+read, squeezed or mistimed cues. Send only those suspect spans first (they are few and answer quickly),
+repair them and check their timing against the audio. The reads of the rest of the recording only
+improve the wording of a few percent of the cues, so they go in the same call but never hold up the
+structural repairs.
 
 ```python
 import importlib.util, json, os

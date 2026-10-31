@@ -10,12 +10,21 @@ and the releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `tools/qc`: helper scripts for re-reading, comparing, voting on and patching a transcript, with tests.
 - The second re-read and vote method in the episode workflow, and new lessons on archaic or dialect speech,
   repeats lost to the loop collapse, retiming a block, and the faults of the repair step.
+- A second attempt for slow Google jobs in `tools/transcribe-episode.py`: a recognition that is slower than a few
+  times the usual answer time gets an immediate-processing copy beside it, first in the other region and then in
+  the first, and the first answer wins. `SE_STT_FALLBACK_REGION` names the other region and `none` turns it off.
+- `tools/qc/recheck.py` takes several reads in one call (`WORK spans_a.json fresh_a.json spans_b.json fresh_b.json`),
+  keeps going until every piece is back or `SE_STT_READ_DEADLINE` seconds (default 2400) have passed, and then stops
+  with the missing list instead of delivering a partial result.
+- A lessons section on slow Google days, and the order of work in the episode workflow: structural defects first.
 - Privacy policy, security policy, contributing guide and code of conduct.
 - Issue forms, a pull request template, a code owners file, Dependabot configuration and a continuous
   integration workflow that runs the tests of the plugin and the tools.
 
 ### Changed
 
+- The cost line printed at the end of a run uses the rate of the processing strategy that ran. It always printed the
+  dynamic batching rate before, so an immediate run looked about five times cheaper than it was.
 - Avalonia updated from 12.1.2 to 12.1.4 and `actions/setup-python` from 7.0.0 to 7.1.0 (pinned by commit). The 22
   plugin tests pass unchanged.
 - The plugin's media tests read their sample paths from `SE_STT_SAMPLE_DIR` and
