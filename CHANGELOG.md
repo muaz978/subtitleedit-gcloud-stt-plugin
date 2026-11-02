@@ -17,6 +17,10 @@ and the releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   keeps going until every piece is back or `SE_STT_READ_DEADLINE` seconds (default 2400) have passed, and then stops
   with the missing list instead of delivering a partial result.
 - A lessons section on slow Google days, and the order of work in the episode workflow: structural defects first.
+- `tools/transcribe-episode.py` checks once that gcloud can load its storage commands and, when the default
+  `python3` is too new for it (Python 3.14 and later lack `ssl.PROTOCOL_TLSv1`), runs gcloud under an older
+  interpreter it finds. An explicit `CLOUDSDK_PYTHON` is respected. The broadcast tool and `tools/qc/recheck.py`
+  inherit it.
 - Privacy policy, security policy, contributing guide and code of conduct.
 - Issue forms, a pull request template, a code owners file, Dependabot configuration and a continuous
   integration workflow that runs the tests of the plugin and the tools.

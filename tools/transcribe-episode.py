@@ -58,6 +58,10 @@ MAX_HEDGES = 2
 HEDGE_STRATEGY = "PROCESSING_STRATEGY_UNSPECIFIED"
 RATE_PER_MIN = {"DYNAMIC_BATCHING": 0.003}   # any other strategy is billed at the standard rate
 RATE_STANDARD = 0.016
+# Interpreters gcloud can run under when the default python3 is too new for it, newest first.
+GCLOUD_PYTHONS = ("python3.13", "python3.12", "python3.11", "python3.10", "python3.9",
+                  "/opt/homebrew/bin/python3.13", "/opt/homebrew/bin/python3.12", "/usr/local/bin/python3.13",
+                  "/usr/local/bin/python3.12", "/usr/bin/python3")
 
 def log(m):
     line = f"[{time.strftime('%H:%M:%S')}] {m}"
@@ -1689,6 +1693,8 @@ class Episode:
         # a concurrent chunk fetch actually touches: the token cache, claim_prefix()'s check-and-set,
         # and the billed/fetched/reused counters.
         self._lock = threading.Lock()
+        self._py_lock = threading.Lock()   # the interpreter check below runs once, however many threads ask
+        self._py_checked = False
 
     # ----- processes -----
     def run_proc(self, args):
@@ -1712,7 +1718,40 @@ class Episode:
         """Project, bucket and gcloud. Only a span that is not cached needs them, so a replay runs without."""
         if self._deploy is None:
             self._deploy = (_need("SE_STT_PROJECT"), _need("SE_STT_BUCKET"), _tool("SE_STT_GCLOUD", "gcloud"))
+        self.gcloud_python(self._deploy[2])
         return self._deploy
+
+    def _gcloud_loads(self, gcloud, env):
+        """True when gcloud can load its storage commands under env, False when it cannot, None when
+        it could not be asked at all (not runnable, or no answer in time). Local only: no network."""
+        try:
+            proc = subprocess.run([gcloud, "storage", "cp", "--help"], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", env=env, timeout=120)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return proc.returncode == 0
+
+    def gcloud_python(self, gcloud):
+        """gcloud runs under the first python3 on PATH, and its storage commands need ssl.PROTOCOL_TLSv1,
+        which Python 3.14 and later no longer have. When a package manager moved python3 up, every upload
+        died with "module 'ssl' has no attribute 'PROTOCOL_TLSv1'" on a machine where nothing else had
+        changed. Check once that a storage command loads. If it does not, try older interpreters and keep
+        the first that works in CLOUDSDK_PYTHON for every later gcloud call. A CLOUDSDK_PYTHON that is
+        already set is never replaced."""
+        with self._py_lock:
+            if self._py_checked:
+                return
+            self._py_checked = True
+            if self.env.get("CLOUDSDK_PYTHON", "").strip() or self._gcloud_loads(gcloud, self.env) is not False:
+                return
+            for name in GCLOUD_PYTHONS:
+                path = shutil.which(name) or (name if os.path.isabs(name) and os.path.exists(name) else None)
+                if path and self._gcloud_loads(gcloud, dict(self.env, CLOUDSDK_PYTHON=path)):
+                    self.env["CLOUDSDK_PYTHON"] = path
+                    log(f"gcloud cannot load its storage commands under the default python3; using {path} for it")
+                    return
+            log("WARNING: gcloud cannot load its storage commands and no older python3 was found for it. "
+                "Install Python 3.9 to 3.13 and set CLOUDSDK_PYTHON to it.")
 
     # ----- audio -----
     def prepare_audio(self, total=None):

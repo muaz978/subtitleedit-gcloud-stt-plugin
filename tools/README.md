@@ -33,6 +33,10 @@ call is pinned to it, so a run never depends on whichever account happens to be 
 gcloud auth activate-service-account --key-file=/path/to/key.json
 ```
 
+gcloud needs a Python it can run under (3.9 to 3.13 at the time of writing). When the default `python3` is
+newer and gcloud cannot load its storage commands, the tool finds an older one by itself and uses it for its
+gcloud calls; set `CLOUDSDK_PYTHON` to a specific interpreter to choose it yourself.
+
 The account needs Cloud Speech Client on the project and read/write on the bucket. Bucket
 level admin is not required: the script only ever reads, writes and deletes objects.
 

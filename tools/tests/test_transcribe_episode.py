@@ -2505,5 +2505,76 @@ class StallGivesUpAndRecuts(TempWorkMixin, unittest.TestCase):
         self.assertTrue(os.path.exists(f"{ep.raw}/part-002.json"))
 
 
+class GcloudPython(TempWorkMixin, unittest.TestCase):
+    """2026-11-03: a package manager moved python3 to 3.15 overnight and every gcloud storage command
+    died with "module 'ssl' has no attribute 'PROTOCOL_TLSv1'", on a machine where nothing else had
+    changed. The tool now checks once that gcloud loads, and falls back to an older interpreter."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("CLOUDSDK_PYTHON", None)
+
+    def ep_with(self, loads):
+        """loads(python or None) -> True, False or None. Records every probe."""
+        ep = self.episode()
+        ep.probes = []
+        def probe(gcloud, env):
+            ep.probes.append(env.get("CLOUDSDK_PYTHON"))
+            return loads(env.get("CLOUDSDK_PYTHON"))
+        ep._gcloud_loads = probe
+        return ep
+
+    def test_a_working_default_is_left_alone(self):
+        ep = self.ep_with(lambda py: True)
+        ep.gcloud_python("gcloud")
+        self.assertEqual(ep.probes, [None])
+        self.assertNotIn("CLOUDSDK_PYTHON", ep.env)
+
+    def test_an_older_python_is_used_when_the_default_cannot_load_gcloud(self):
+        ep = self.ep_with(lambda py: py == "/x/python3.12")
+        found = {"python3.13": "/x/python3.13", "python3.12": "/x/python3.12"}
+        with mock.patch.object(te.shutil, "which", side_effect=lambda n: found.get(n)), mock.patch.object(te, "log") as log:
+            ep.gcloud_python("gcloud")
+        self.assertEqual(ep.env["CLOUDSDK_PYTHON"], "/x/python3.12")
+        self.assertEqual(ep.probes, [None, "/x/python3.13", "/x/python3.12"])   # newest first, stops at the first that works
+        self.assertIn("/x/python3.12", log.call_args[0][0])
+
+    def test_an_explicit_choice_is_never_replaced_or_probed(self):
+        os.environ["CLOUDSDK_PYTHON"] = "/mine/python"
+        ep = self.ep_with(lambda py: False)
+        ep.gcloud_python("gcloud")
+        self.assertEqual(ep.probes, [])
+        self.assertEqual(ep.env["CLOUDSDK_PYTHON"], "/mine/python")
+
+    def test_no_working_python_warns_and_leaves_the_environment_alone(self):
+        ep = self.ep_with(lambda py: False)
+        with mock.patch.object(te.shutil, "which", return_value=None), \
+             mock.patch.object(te.os.path, "exists", return_value=False), mock.patch.object(te, "log") as log:
+            ep.gcloud_python("gcloud")
+        self.assertNotIn("CLOUDSDK_PYTHON", ep.env)
+        self.assertIn("CLOUDSDK_PYTHON", log.call_args[0][0])
+
+    def test_a_gcloud_that_cannot_be_asked_is_not_blamed_on_python(self):
+        ep = self.ep_with(lambda py: None)
+        ep.gcloud_python("gcloud")
+        self.assertEqual(ep.probes, [None])
+        self.assertNotIn("CLOUDSDK_PYTHON", ep.env)
+
+    def test_the_check_runs_once(self):
+        ep = self.ep_with(lambda py: True)
+        ep.gcloud_python("gcloud")
+        ep.gcloud_python("gcloud")
+        self.assertEqual(len(ep.probes), 1)
+
+    def test_deploy_runs_the_check_with_the_gcloud_it_will_use(self):
+        ep = self.episode()
+        seen = []
+        ep.gcloud_python = seen.append
+        with mock.patch.dict(os.environ, {"SE_STT_PROJECT": "p", "SE_STT_BUCKET": "b", "SE_STT_GCLOUD": sys.executable}):
+            self.assertEqual(ep.deploy()[2], sys.executable)
+            ep.deploy()
+        self.assertEqual(seen, [sys.executable, sys.executable])   # cheap: gcloud_python itself returns after the first
+
+
 if __name__ == "__main__":
     unittest.main()

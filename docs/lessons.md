@@ -63,6 +63,13 @@ If you run long or difficult audio, prefer the Python tool: it carries the guard
   the run.
 
 **Watch for**
+- **A python3 that is too new for gcloud.** gcloud runs under the first `python3` on PATH, and its storage
+  commands need `ssl.PROTOCOL_TLSv1`, which Python 3.14 and later no longer have. After a package manager moved
+  python3 up, every upload died with `module 'ssl' has no attribute 'PROTOCOL_TLSv1'` on a machine where nothing
+  else had changed. The tool now checks once that gcloud loads and falls back to the newest Python 3.13 or older
+  it finds (kept in `CLOUDSDK_PYTHON` for its own gcloud calls); an explicit `CLOUDSDK_PYTHON` is never replaced.
+  If you run gcloud by hand and see the error, export `CLOUDSDK_PYTHON` yourself. Helper scripts that need numpy
+  can break the same way after such a move, so check which interpreter has it before blaming the data.
 - Models other than `chirp_3` are not generally available. `chirp` and `chirp_2` returned "does not
   exist" or "no longer generally available" in the regions tried.
 - If bucket metadata is not readable by the account, tooling that insists on reading it will fail
