@@ -177,7 +177,10 @@ resending the same job sooner usually answered in a minute or two.
   the rest. The tool does this on its own (SE_STT_FALLBACK_REGION names the other region, "none" turns it
   off). It costs one more recognition of the pieces that were already slow, and nothing on a good day.
   Stopping the losing attempts needs the speech.operations.cancel permission on the account; without it
-  the tool asks once, gets a refusal, and the losing attempts finish and are billed as well.
+  the tool asks once, gets a refusal, and the losing attempts finish and are billed as well. With the
+  permission Google answers the cancel with HTTP 200, but in tests jobs of 10 to 120 seconds (immediate
+  processing) and one of 60 seconds (dynamic batching) still ran to the end with a normal answer, so treat
+  the cancel as best effort and do not count on it to save the cost of a losing attempt (a few cents).
 - Send all the fresh re-reads in one call. Two reads started one after the other each waited out the same
   stall in turn.
 - A run that cannot finish does not deliver a partial subtitle by itself. It stops, says which pieces are
