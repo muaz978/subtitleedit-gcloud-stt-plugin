@@ -31,12 +31,13 @@ a script with no arguments prints its usage.
 |:--|:--|
 | `cues.py` | Structure and pattern scan of a subtitle (inverted or overlapping cues, cues under 0.3 s, stray scripts, runs of the same short phrase (up to three words) in four or more cues, long gaps, repeated six-word sequences). `show A B` prints cues A to B, `at T0 T1` prints the cues in a time range |
 | `make_spans.py` | Cuts the episode into pieces of about 150 s at the widest gaps of the subtitle itself. Mode A starts at 0, mode B shifts every cut by 75 s and keeps it at least 30 s from a cut of A |
+| `make_spans_audio.py` | The same pieces as `make_spans.py`, but the cuts come from the silences of the audio itself (`FULL.flac TOTAL_SECONDS A\|B OUT.json [A_SPANS.json]`, ffmpeg silencedetect). It needs nothing from the first pass, so the whole-recording reads can be sent beside the first pass instead of after it |
 | `recheck.py` | Sends the pieces to the model through the episode tool's own `fetch_pieces` and writes the fresh words with absolute times. Give it every read in one call (`WORK spans_a.json fresh_a.json spans_b.json fresh_b.json`) so they are waited for together; slow pieces get a second attempt in the other region, and it stops with exit code 2 and a missing list after `SE_STT_READ_DEADLINE` seconds (default 2400) |
 | `compare.py` | Per piece: how well the subtitle agrees with a fresh read, and the differences ("srt only", "fresh only", "swap") |
 | `displace.py` | Cues whose words sit at another time than in a fresh read, with the distance from the piece edge (an edge hit is usually an artifact) |
 | `fview.py` | A time range as spoken lines from every fresh piece, next to the subtitle's cues |
 | `consensus.py` | The vote: lists a proposal only where both reads disagree with the subtitle in the same place and agree with each other away from piece edges. The kinds are `replace`, `insert` (with the cue it goes after, or the cue it belongs inside), `delete` (both reads silent) and `unsupported` (one read silent, the other hears different words). Places where the reads disagree with each other are not proposals, they are listed under `split` |
-| `make_evidence.py` | Writes evidence files for reviewers (batches of about 20 proposals plus hand-picked trouble spots) |
+| `make_evidence.py` | Writes evidence files for reviewers (batches of up to 20 proposals plus hand-picked trouble spots). A batch is cut further so that no file is larger than `EVIDENCE_MAX_KB` (default 28): a reviewer that reads a file through a tool whose output is cut at about 30 KB would silently see only part of a larger one |
 | `review_rules.md` | The written rules to give each reviewer (and each skeptic, with a lens added) |
 | `retime.py` | Retimes a displaced or squeezed block of cues from the fresh reads' own word times |
 | `patch.py` | Applies reviewed edits with the old text checked, and writes the new subtitle, a change log and a map from original to final cue numbers |

@@ -9,7 +9,7 @@ sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 QC = os.path.abspath(os.path.join(HERE, os.pardir, "qc"))
-SCRIPTS = ["cues", "compare", "consensus", "displace", "fview", "make_spans", "make_evidence", "patch", "recheck", "retime"]
+SCRIPTS = ["cues", "compare", "consensus", "displace", "fview", "make_spans", "make_spans_audio", "make_evidence", "patch", "recheck", "retime"]
 
 # invented vocabulary, nothing from a real recording
 W = ("river stone lamp window garden candle morning bridge harbor market silver orchard meadow pillow "
@@ -202,6 +202,48 @@ class SpansTests(Base):
         inner_a = {x for s in a for x in s} - {0.0, 420.0}
         for cut in {x for s in b for x in s} - {0.0, 420.0}:
             self.assertGreaterEqual(min(abs(cut - x) for x in inner_a), 30.0)
+
+
+class AudioSpansTests(Base):
+    """make_spans_audio.py cuts at silences of the sound itself. A stand-in ffmpeg prints silencedetect lines, so no media is needed."""
+    def fake_ffmpeg(self, silences):
+        lines = []
+        for a, b in silences:
+            lines.append("[silencedetect @ 0x1] silence_start: %s" % a)
+            lines.append("[silencedetect @ 0x1] silence_end: %s | silence_duration: %s" % (b, round(b - a, 3)))
+        script = self.path("fake_ffmpeg")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("#!%s\nimport sys\nsys.stderr.write(%r)\n" % (sys.executable, "\n".join(lines) + "\n"))
+        os.chmod(script, 0o755)
+        return script
+
+    def test_cuts_fall_inside_the_silences_and_a_and_b_keep_apart(self):
+        # a silence of 1.5 s centred every 50 s, plus short 0.5 s ones in between that must lose against the wide ones
+        silences = [(i * 50.0 - 0.75, i * 50.0 + 0.75) for i in range(1, 9)] + [(i * 50.0 + 20.0, i * 50.0 + 20.5) for i in range(0, 8)]
+        env = {"SE_STT_FFMPEG": self.fake_ffmpeg(silences)}
+        audio = self.write("full.flac", "not really audio")
+        run("make_spans_audio.py", audio, 420, "A", self.path("a.json"), env=env)
+        run("make_spans_audio.py", audio, 420, "B", self.path("b.json"), self.path("a.json"), env=env)
+        a, b = json.loads(self.read("a.json")), json.loads(self.read("b.json"))
+        for spans in (a, b):
+            self.assertEqual(spans[0][0], 0.0)
+            self.assertEqual(spans[-1][1], 420.0)
+            for x, y in zip(spans, spans[1:]):
+                self.assertEqual(x[1], y[0])
+        wide = [(g0, g1) for g0, g1 in silences if g1 - g0 > 1.0]
+        for cut in {x for s in a for x in s} - {0.0, 420.0}:
+            self.assertTrue(any(g0 <= cut <= g1 for g0, g1 in wide), "cut %s is not inside a wide silence" % cut)
+        inner_a = {x for s in a for x in s} - {0.0, 420.0}
+        for cut in {x for s in b for x in s} - {0.0, 420.0}:
+            self.assertGreaterEqual(min(abs(cut - x) for x in inner_a), 30.0)
+
+    def test_no_silence_stops_with_a_clear_message(self):
+        env = {"SE_STT_FFMPEG": self.fake_ffmpeg([])}
+        audio = self.write("full.flac", "x")
+        p = subprocess.run([sys.executable, "-B", os.path.join(QC, "make_spans_audio.py"), audio, "300", "A", self.path("a.json")],
+                           capture_output=True, text=True, env=dict(os.environ, **env))
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("no silence found", p.stderr)
 
 
 class CompareTests(Base):
@@ -412,6 +454,26 @@ class RobustnessTests(Base):
         self.assertIn(TR[4], self.read(os.path.join("evidence", "batch_01.md")))
 
 
+class EvidenceSizeTests(Base):
+    def test_a_batch_larger_than_the_cap_is_split_without_losing_a_proposal(self):
+        cues = steady_cues(60)
+        srt = self.write("a.srt", srt_text(cues))
+        swap = {"basket": "casket", "lamp": "lump", "garden": "harden", "pepper": "pipper"}
+        a = self.write_json("a.json", {"0-200": fresh_from(cues, swap=swap)})
+        b = self.write_json("b.json", {"0-200": fresh_from(cues, swap=swap)})
+        run("consensus.py", srt, a, b, self.path("c.json"))
+        ids = sorted(x["id"] for x in json.loads(self.read("c.json"))["proposals"])
+        self.assertGreater(len(ids), 6)
+        run("make_evidence.py", srt, a, b, self.path("c.json"), self.path("whole"), env={"EVIDENCE_MAX_KB": "1000"})
+        self.assertEqual(len(json.loads(self.read(os.path.join("whole", "index.json")))["batches"]), 1)
+        run("make_evidence.py", srt, a, b, self.path("c.json"), self.path("small"), env={"EVIDENCE_MAX_KB": "3"})
+        index = json.loads(self.read(os.path.join("small", "index.json")))
+        self.assertGreater(len(index["batches"]), 1)
+        self.assertEqual(sorted(i for b in index["batches"] for i in b["ids"]), ids)        # each proposal in exactly one batch
+        for b in index["batches"]:
+            self.assertLessEqual(os.path.getsize(b["file"]), 3000 + 800)                    # about the cap, one proposal over at most
+
+
 class VoteDetailTests(Base):
     def test_reads_that_disagree_with_each_other_are_listed_as_split(self):
         cues = steady_cues(10)
@@ -435,6 +497,7 @@ class VoteDetailTests(Base):
         run("make_evidence.py", srt, a, b, self.path("c.json"), self.path("evidence"))
         batch = self.read(os.path.join("evidence", "batch_01.md"))
         self.assertIn("(insert after cue 4)", batch)
+        self.assertIn("not evidence of a missing cue", batch)
         self.assertIn("(00:00:17.90 to 00:00:18.80)", batch)
 
 

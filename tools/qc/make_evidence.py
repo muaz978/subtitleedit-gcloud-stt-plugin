@@ -3,7 +3,9 @@
 
 usage: make_evidence.py SRT FRESH_A.json FRESH_B.json CONSENSUS.json OUTDIR [SPECIALS.json]
 
-OUTDIR/batch_NN.md    one per group of about 20 proposals, no cue shared between two batches
+OUTDIR/batch_NN.md    one per group of up to 20 proposals, no cue shared between two batches, cut further so that no file
+                      is larger than EVIDENCE_MAX_KB (environment variable, default 28): a reviewer reading a bigger
+                      file through a tool whose output is cut at about 30 KB would see only part of it
 OUTDIR/special_*.md   hand-picked trouble spots (SPECIALS.json) plus an automatic one for cues under 0.3 s
 OUTDIR/index.json     the file list for the reviewers
 
@@ -66,12 +68,16 @@ def cue_block(a, b):
 
 
 def section(title, t0, t1, ca, cb):
-    return ("## %s\nTime range %s to %s.\n\n### Current subtitle cues (exact text, this is what an edit's `old` must match)\n```\n%s\n```\n\n"
+    return ("## %s\nTime range %s to %s.\n\nThe read lines below start a few seconds before the first cue and run a few seconds past the last one. "
+            "Words in a read at those two ends have no cue in the list on purpose: they are not evidence of a missing cue.\n\n"
+            "### Current subtitle cues (exact text, this is what an edit's `old` must match)\n```\n%s\n```\n\n"
             "### Fresh read A (independent Chirp read, cut at other places)\n```\n%s\n```\n\n### Fresh read B (another independent Chirp read)\n```\n%s\n```\n"
             % (title, fmt(t0)[:11], fmt(t1)[:11], cue_block(ca, cb), "\n".join(lines(A, t0, t1)), "\n".join(lines(B, t0, t1))))
 
 
 P = load(cons_path)["proposals"]
+# a batch is cut by size as well: a reviewer whose tool output is cut at about 30 KB sees only part of a larger file
+MAX_BYTES = int(float(os.environ.get("EVIDENCE_MAX_KB", "28")) * 1000)
 batches, cur = [], []
 for p in P:
     if cur and (len(cur) >= 20 and p["cues"][0] > max(x["cues"][-1] for x in cur) + 2):
@@ -79,8 +85,9 @@ for p in P:
     cur.append(p)
 if cur:
     batches.append(cur)
-index = {"batches": [], "specials": []}
-for n, b in enumerate(batches, 1):
+
+
+def render(n, b):
     ca, cb = max(1, min(p["cues"][0] for p in b) - 3), min(len(cues), max(p["cues"][-1] for p in b) + 3)
     t0, t1 = cmap[ca]["s"] - 4, cmap[cb]["e"] + 4
     txt = "# Batch %02d: proposals %d to %d\n\n" % (n, b[0]["id"], b[-1]["id"])
@@ -96,9 +103,30 @@ for n, b in enumerate(batches, 1):
         txt += "- #%d [%s] time %s, cue(s) %s%s\n    subtitle words: `%s`\n    read A says:   `%s`%s\n    read B says:   `%s`%s\n" % (
             p["id"], p["kind"], fmt(p["t"])[:11], ", ".join(str(x) for x in p["cues"]), where, p["srt"],
             p["a"], when(p.get("a_span")), p["b"], when(p.get("b_span")))
+    return txt, ca, cb
+
+
+def split_big(b):
+    """Halve a batch until each part fits MAX_BYTES; cut only where no cue is shared between the two parts."""
+    if len(b) < 2 or len(render(0, b)[0].encode("utf-8")) <= MAX_BYTES:
+        return [b]
+    cuts = [i for i in range(1, len(b)) if b[i]["cues"][0] > max(x["cues"][-1] for x in b[:i]) + 2]
+    if not cuts:
+        return [b]
+    i = min(cuts, key=lambda i: abs(i - len(b) / 2))
+    return split_big(b[:i]) + split_big(b[i:])
+
+
+batches = [part for b in batches for part in split_big(b)]
+index = {"batches": [], "specials": []}
+for n, b in enumerate(batches, 1):
+    txt, ca, cb = render(n, b)
     path = os.path.join(outdir, "batch_%02d.md" % n)
     with open(path, "w", encoding="utf-8") as f:
         f.write(txt)
+    if len(txt.encode("utf-8")) > MAX_BYTES:
+        print("WARNING: batch %02d is %d KB (limit %d KB): it cannot be split further; the reviewer must read it in parts"
+              % (n, len(txt.encode("utf-8")) // 1000, MAX_BYTES // 1000), file=sys.stderr)
     index["batches"].append({"n": n, "file": os.path.abspath(path), "ids": [p["id"] for p in b], "cues": [ca, cb]})
 
 

@@ -369,6 +369,16 @@ spellings in a single episode.
   a difference alone is not an error. Change a name only where a fresh read supports it, and list the
   other places for a listener.
 
+### A block shifted by a constant, and speech under a moved block
+- **A constant shift hides in the median.** A block of cues that is a fixed amount late or early (seen: about 140 cues
+  2 seconds late) leaves the median start offset against the audio near zero when the rest of the window is right.
+  Look at the share of starts within 0.15 seconds per window instead: a window under about 0.6 needs a look.
+- **A block moved far from its real time takes real speech with it.** The tool put blocks 164 and 328 seconds off,
+  over stretches that held real speech, and left the stretch they came from empty. After moving a block, run the hole
+  check again and rebuild what is empty from the reads.
+- **The notes can name more cues than moved.** A note about a moved span may be wider than the part that is displaced
+  (in one case 79 cues named, 57 moved). Retime only the cues the reads show displaced and check the edge of the block cue by cue.
+
 ### Wording that differs between reads
 The first pass, which is one long recognition, can word a sentence worse than a short fresh read, and
 two short reads can word it differently from each other.

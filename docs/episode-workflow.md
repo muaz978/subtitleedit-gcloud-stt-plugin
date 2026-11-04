@@ -110,6 +110,11 @@ comparing, voting, retiming, patching) are in [tools/qc](../tools/qc/README.md).
    waits for both together and keeps going until every piece is back or `SE_STT_READ_DEADLINE`
    seconds (default 2400) have passed. If it stops with pieces missing, do not deliver a partial
    subtitle: tell the person which pieces are missing and why, and let them choose.
+4. The whole-recording reads need the audio, not the first pass. The tool writes `full.flac` a few
+   seconds after it starts; `tools/qc/make_spans_audio.py` cuts the pieces at silences of that file, so
+   the reads can be sent beside the first pass and are ready when it ends (on a 71 minute recording the
+   whole job took 19 minutes instead of 30, with the same repairs; on a 154 minute recording the reads, 62 pieces each, finished a minute before the first pass and cost nothing extra). Send them only once the first pass
+   has started its chunks and is still alive, and stop them if it dies without a subtitle: they are paid.
 
 **Order of work.** Do what a person cannot fix by ear first. Structural problems need both reads: a
 stretch with no words, a block of cues placed far from where it is spoken, a replay, cues too short to

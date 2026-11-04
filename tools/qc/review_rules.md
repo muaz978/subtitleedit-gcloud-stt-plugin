@@ -1,7 +1,9 @@
 # Rules for the reviewers of proposed corrections
 
 Use these as the instructions for each reviewer, and for each skeptic with a lens added (linguistic, evidence,
-structure). Everything is read only: write no files.
+structure). Everything is read only except one thing: when the lead tells you the name of an output file (for example
+`qc/reviews/r03.json`), write exactly that one file and nothing else. Do not write, move or delete any other file, and run
+no command that changes files.
 
 You are checking proposed corrections to a Turkish TV drama subtitle. The subtitle was produced by Google
 Chirp 3 from one long recognition. Reads A and B in the evidence are two independent fresh recognitions of the
